@@ -15,6 +15,9 @@ type Client = {
 }
 
 const clients = new Set<Client>()
+/** Locked meeting rooms (plaza-main is never lockable). */
+const lockedRooms = new Map<string, { byId: string; byName: string }>()
+const UNLOCKABLE = new Set(['plaza-main'])
 
 function send(ws: WebSocket, msg: ServerMsg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
@@ -36,6 +39,33 @@ function livePeers(): PeerPresence[] {
     out.push(c.peer)
   }
   return out
+}
+
+function lockedRoomIds(): string[] {
+  return [...lockedRooms.keys()]
+}
+
+function occupantsIn(roomId: string): number {
+  let n = 0
+  for (const c of clients) {
+    if (c.peer?.roomId === roomId) n += 1
+  }
+  return n
+}
+
+/** Unlock empty rooms so locks do not stick after everyone leaves. */
+function unlockEmptyRooms() {
+  for (const roomId of [...lockedRooms.keys()]) {
+    if (occupantsIn(roomId) > 0) continue
+    lockedRooms.delete(roomId)
+    broadcast({
+      type: 'room-lock',
+      roomId,
+      locked: false,
+      byId: 'system',
+      byName: 'system',
+    })
+  }
 }
 
 function readBody(req: http.IncomingMessage): Promise<string> {
@@ -123,7 +153,11 @@ wss.on('connection', (ws) => {
     if (msg.type === 'hello') {
       client.id = msg.id
       client.email = msg.email
-      send(ws, { type: 'welcome', peers: livePeers().filter((p) => p.id !== msg.id) })
+      send(ws, {
+        type: 'welcome',
+        peers: livePeers().filter((p) => p.id !== msg.id),
+        lockedRooms: lockedRoomIds(),
+      })
       return
     }
 
@@ -133,6 +167,7 @@ wss.on('connection', (ws) => {
       client.email = msg.peer.email
       client.peer = { ...msg.peer, updatedAt: Date.now() }
       broadcast({ type: 'presence', peer: client.peer }, ws)
+      unlockEmptyRooms()
       return
     }
 
@@ -141,6 +176,35 @@ wss.on('connection', (ws) => {
       if (!id) return
       client.peer = null
       broadcast({ type: 'leave', id }, ws)
+      unlockEmptyRooms()
+      return
+    }
+
+    if (msg.type === 'room-lock') {
+      if (!client.id || !client.peer) return
+      const roomId = msg.roomId?.trim()
+      if (!roomId || UNLOCKABLE.has(roomId)) {
+        send(ws, { type: 'error', message: 'room cannot be locked' })
+        return
+      }
+      // Only occupants can lock / unlock
+      if (client.peer.roomId !== roomId) {
+        send(ws, { type: 'error', message: 'must be inside the room to lock/unlock' })
+        return
+      }
+      const byName = client.peer.look?.displayName || client.email || client.id
+      if (msg.locked) {
+        lockedRooms.set(roomId, { byId: client.id, byName })
+      } else {
+        lockedRooms.delete(roomId)
+      }
+      broadcast({
+        type: 'room-lock',
+        roomId,
+        locked: !!msg.locked,
+        byId: client.id,
+        byName,
+      })
       return
     }
 
@@ -172,6 +236,7 @@ wss.on('connection', (ws) => {
     const id = client.id
     clients.delete(client)
     if (id) broadcast({ type: 'leave', id })
+    unlockEmptyRooms()
   })
 })
 
@@ -184,6 +249,7 @@ setInterval(() => {
       broadcast({ type: 'leave', id })
     }
   }
+  unlockEmptyRooms()
 }, 2000)
 
 await ensureDataDir()
