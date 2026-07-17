@@ -105,6 +105,7 @@ export function makePresence(
   roomId: string | null,
   voiceOn: boolean,
   sharing: boolean,
+  jumpAt?: number,
 ): PeerPresence {
   return {
     id,
@@ -116,6 +117,7 @@ export function makePresence(
     roomId,
     voiceOn,
     sharing,
+    jumpAt,
     updatedAt: Date.now(),
   }
 }

@@ -7,8 +7,9 @@ function lanHosts(): string[] {
   const hosts = new Set<string>(['localhost', '127.0.0.1', '::1'])
   for (const nets of Object.values(os.networkInterfaces())) {
     for (const net of nets ?? []) {
-      if (net.family === 'IPv4' || net.family === 4) hosts.add(net.address)
-      if (net.family === 'IPv6' || net.family === 6) hosts.add(net.address)
+      const family = String(net.family)
+      if (family === 'IPv4' || family === '4') hosts.add(net.address)
+      if (family === 'IPv6' || family === '6') hosts.add(net.address)
     }
   }
   return [...hosts]

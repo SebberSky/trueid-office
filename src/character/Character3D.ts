@@ -55,6 +55,10 @@ export class Character3D {
   private rightArm!: THREE.Object3D
   private headG!: THREE.Group
   private walkPhase = 0
+  private jumpY = 0
+  private jumpVel = 0
+  private readonly jumpSpeed = 5.2
+  private readonly jumpGravity = 20
   private label: THREE.Sprite
   private gait: Gait = 'human'
   private animalKind: AnimalKind | null = null
@@ -453,6 +457,16 @@ export class Character3D {
     this.root.add(this.label)
   }
 
+  /** Visual-only hop — does not change map collision / terrain. */
+  triggerJump() {
+    if (this.jumpY > 0.02 || this.jumpVel > 0) return
+    this.jumpVel = this.jumpSpeed
+  }
+
+  airHeight() {
+    return this.jumpY
+  }
+
   setPose(
     px: number,
     pz: number,
@@ -462,7 +476,8 @@ export class Character3D {
     dt: number,
     overWater = false,
   ) {
-    this.root.position.set(px, py, pz)
+    this.stepJump(dt)
+    this.root.position.set(px, py + this.jumpY, pz)
     const yaw =
       facing === 'down' ? 0 : facing === 'up' ? Math.PI : facing === 'left' ? -Math.PI / 2 : Math.PI / 2
     this.body.rotation.y = yaw
@@ -474,6 +489,16 @@ export class Character3D {
       this.hoverInPlace(dt)
     } else {
       this.settle()
+    }
+  }
+
+  private stepJump(dt: number) {
+    if (this.jumpVel === 0 && this.jumpY === 0) return
+    this.jumpY += this.jumpVel * dt
+    this.jumpVel -= this.jumpGravity * dt
+    if (this.jumpY <= 0) {
+      this.jumpY = 0
+      this.jumpVel = 0
     }
   }
 
