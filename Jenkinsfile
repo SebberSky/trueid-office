@@ -33,10 +33,10 @@ pipeline {
 
   post {
     success {
-      echo 'Office restarted. Guests: https://100.67.207.114:5173/'
+      echo 'Office restarted + Funnel. Guests (no VPN): https://agent3s-imac.tail91abbd.ts.net/'
     }
     failure {
-      echo 'Restart failed — check Node/pm2 on the agent and port 5173/3001.'
+      echo 'Restart failed — check Node/pm2/Tailscale Funnel on the agent and port 5173/3001.'
     }
   }
 }
