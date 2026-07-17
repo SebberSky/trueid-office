@@ -28,7 +28,7 @@ Virtual workspace สำหรับอีเมลองค์กร `@truedigi
 npm run share-info
 ```
 
-Webhook จะ: `npm ci` → `pm2 restart` (`dev:funnel`)  
+Webhook จะ: `npm ci` → `pm2 restart` (`dev`)  
 **Tailscale Funnel** คอนฟิกค้างบนโฮสต์แล้ว — deploy ไม่ต้องเปิด Funnel ใหม่
 
 ## Jenkins (webhook → รีสตาร์ทโฮสต์)
