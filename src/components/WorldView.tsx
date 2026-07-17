@@ -34,6 +34,11 @@ export function WorldView() {
   const session = useAppStore((s) => s.session)!
   const goCreator = useAppStore((s) => s.goCreator)
   const logout = useAppStore((s) => s.logout)
+  const worldActive = useAppStore((s) => s.screen === 'world')
+  const worldActiveRef = useRef(worldActive)
+  worldActiveRef.current = worldActive
+  const resumeAudioRef = useRef<(() => void) | null>(null)
+  const wasWorldActiveRef = useRef(worldActive)
 
   const map = useMemo(() => generateWorld(20260717), [])
   const canvasRef = useRef<HTMLCanvasElement>(null)
@@ -92,6 +97,8 @@ export function WorldView() {
     ])
   }, [])
 
+  const jumpAtRef = useRef(0)
+
   const publish = useCallback(() => {
     const bus = busRef.current
     if (!bus) return
@@ -107,6 +114,7 @@ export function WorldView() {
         room?.id ?? null,
         voiceOn,
         sharing,
+        jumpAtRef.current || undefined,
       ),
     )
   }, [map, session, voiceOn, sharing])
@@ -172,9 +180,11 @@ export function WorldView() {
           if (stream.getAudioTracks().length === 0) continue
           const audio = document.createElement('audio')
           audio.autoplay = true
+          audio.setAttribute('playsinline', 'true')
           audio.srcObject = stream
           audio.dataset.peer = id
           host.appendChild(audio)
+          void audio.play().catch(() => undefined)
         }
         if (recorderRef.current?.recording) {
           recorderRef.current.setAudioSources(mediaRef.current?.collectAudioStreams() ?? [])
@@ -188,11 +198,25 @@ export function WorldView() {
     )
     mediaRef.current = media
 
+    const resumeAudio = () => {
+      const host = audioHostRef.current
+      if (!host) return
+      for (const el of host.querySelectorAll('audio')) {
+        void (el as HTMLAudioElement).play().catch(() => undefined)
+      }
+    }
+    window.addEventListener('pointerdown', resumeAudio)
+    window.addEventListener('keydown', resumeAudio)
+    resumeAudioRef.current = resumeAudio
+
     const onLeave = () => bus.leave(session.id)
     window.addEventListener('beforeunload', onLeave)
 
     return () => {
       window.removeEventListener('beforeunload', onLeave)
+      window.removeEventListener('pointerdown', resumeAudio)
+      window.removeEventListener('keydown', resumeAudio)
+      resumeAudioRef.current = null
       onLeave()
       unsub()
       unsubChat()
@@ -218,11 +242,20 @@ export function WorldView() {
       'KeyD',
     ])
     const onDown = (e: KeyboardEvent) => {
+      if (!worldActiveRef.current) return
       const tag = (e.target as HTMLElement)?.tagName
       if (tag === 'INPUT' || tag === 'TEXTAREA') return
       if (moveCodes.has(e.code)) {
         e.preventDefault()
         keys.current.add(e.code)
+      }
+      if (e.code === 'Space') {
+        e.preventDefault()
+        if (!e.repeat) {
+          sceneRef.current?.jump()
+          jumpAtRef.current = Date.now()
+          publishRef.current()
+        }
       }
       if (e.code === 'Equal' || e.code === 'NumpadAdd' || e.key === '=' || e.key === '+') {
         e.preventDefault()
@@ -250,6 +283,19 @@ export function WorldView() {
     return () => clearInterval(id)
   }, [publish])
 
+  // Back from character editor: keep talking — revive audio + peer links immediately.
+  useEffect(() => {
+    const wasActive = wasWorldActiveRef.current
+    wasWorldActiveRef.current = worldActive
+    if (!worldActive || wasActive) return
+
+    resumeAudioRef.current?.()
+    const room = roomAt(map, pos.current.x, pos.current.y)
+    if (!room || !mediaRef.current) return
+    const peerIds = peersRef.current.filter((p) => p.roomId === room.id).map((p) => p.id)
+    void mediaRef.current.refreshConnections(peerIds, true)
+  }, [worldActive, map])
+
   // 3D scene + movement loop
   useEffect(() => {
     const canvas = canvasRef.current
@@ -264,6 +310,7 @@ export function WorldView() {
     let lastUi = { roomName: null as string | null, roomId: null as string | null, in: 0, max: 0 }
     let lastPeerKey = ''
     let lastNetSend = 0
+    let lastHeal = 0
     let lastNetX = pos.current.x
     let lastNetY = pos.current.y
     let lastNetFacing = facing.current
@@ -311,9 +358,62 @@ export function WorldView() {
       pos.current.y = ny
     }
 
+    const maintainMedia = (now: number) => {
+      const room = roomAt(map, pos.current.x, pos.current.y)
+      const peers = peersRef.current
+      const inRoomPeers = peers.filter((p) => p.roomId && room && p.roomId === room.id)
+      const occupants = inRoomPeers.length + (room ? 1 : 0)
+      const nextRoomName = room?.name ?? null
+      const nextRoomId = room?.id ?? null
+      const nextCap = room?.capacity ?? 0
+
+      if (
+        nextRoomName !== lastUi.roomName ||
+        nextRoomId !== lastUi.roomId ||
+        occupants !== lastUi.in ||
+        nextCap !== lastUi.max
+      ) {
+        lastUi = { roomName: nextRoomName, roomId: nextRoomId, in: occupants, max: nextCap }
+        setRoomName(nextRoomName)
+        setRoomId(nextRoomId)
+        setCapacity({ in: occupants, max: nextCap })
+      }
+
+      const peerKey = `${nextRoomId ?? ''}|${inRoomPeers
+        .map((p) => p.id)
+        .sort()
+        .join(',')}`
+      if (mediaRef.current && peerKey !== lastPeerKey) {
+        lastPeerKey = peerKey
+        void mediaRef.current.syncRoom(
+          nextRoomId,
+          inRoomPeers.map((p) => p.id),
+        )
+      }
+
+      // While editing character, still heal dead peer links so both sides keep talking.
+      if (!worldActiveRef.current && mediaRef.current && nextRoomId && now - lastHeal > 2000) {
+        lastHeal = now
+        void mediaRef.current.refreshConnections(
+          inRoomPeers.map((p) => p.id),
+          false,
+        )
+      }
+
+      return { peers, movingRoom: !!nextRoomId }
+    }
+
     const tick = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
+
+      if (!worldActiveRef.current) {
+        keys.current.clear()
+        stickRef.current = { x: 0, y: 0 }
+        maintainMedia(now)
+        raf = requestAnimationFrame(tick)
+        return
+      }
 
       let dx = 0
       let dy = 0
@@ -354,38 +454,7 @@ export function WorldView() {
         lastNetFacing = facing.current
       }
 
-      const room = roomAt(map, pos.current.x, pos.current.y)
-      const peers = peersRef.current
-      const inRoomPeers = peers.filter((p) => p.roomId && room && p.roomId === room.id)
-      const occupants = inRoomPeers.length + (room ? 1 : 0)
-      const nextRoomName = room?.name ?? null
-      const nextRoomId = room?.id ?? null
-      const nextCap = room?.capacity ?? 0
-
-      if (
-        nextRoomName !== lastUi.roomName ||
-        nextRoomId !== lastUi.roomId ||
-        occupants !== lastUi.in ||
-        nextCap !== lastUi.max
-      ) {
-        lastUi = { roomName: nextRoomName, roomId: nextRoomId, in: occupants, max: nextCap }
-        setRoomName(nextRoomName)
-        setRoomId(nextRoomId)
-        setCapacity({ in: occupants, max: nextCap })
-      }
-
-      const peerKey = `${nextRoomId ?? ''}|${inRoomPeers
-        .map((p) => p.id)
-        .sort()
-        .join(',')}`
-      if (mediaRef.current && peerKey !== lastPeerKey) {
-        lastPeerKey = peerKey
-        void mediaRef.current.syncRoom(
-          nextRoomId,
-          inRoomPeers.map((p) => p.id),
-        )
-      }
-
+      const { peers } = maintainMedia(now)
       scene.syncPeers(peers, map, dt)
       scene.render(map, pos.current.x, pos.current.y, facing.current, moving, dt)
       raf = requestAnimationFrame(tick)
@@ -584,7 +653,7 @@ export function WorldView() {
           </div>
         )}
         <div className="world__hint world__hint--desktop">
-          WASD / ลูกศร เดิน (ใช้ได้แม้คีย์บอร์ดไทย) · ลูกกลมเมาส์ / +− ซูม
+          WASD / ลูกศร เดิน · Space กระโดด · ลูกกลมเมาส์ / +− ซูม
         </div>
         <MobileControls
           stickRef={stickRef}

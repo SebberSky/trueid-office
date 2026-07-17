@@ -22,6 +22,7 @@ type PeerMotion = {
   tx: number
   ty: number
   facing: Facing
+  lastJumpAt: number
 }
 
 export class CampusScene {
@@ -608,6 +609,11 @@ export class CampusScene {
     return this.zoomTarget
   }
 
+  /** Visual hop for the local player (Space). */
+  jump() {
+    this.player.triggerJump()
+  }
+
   syncPeers(peers: PeerPresence[], map: WorldMap, dt = 0) {
     const seen = new Set<string>()
     for (const p of peers) {
@@ -618,13 +624,24 @@ export class CampusScene {
         avatar = new Character3D(p.look)
         this.peers.set(p.id, avatar)
         this.scene.add(avatar.root)
-        motion = { x: p.x, y: p.y, tx: p.x, ty: p.y, facing: p.facing }
+        motion = {
+          x: p.x,
+          y: p.y,
+          tx: p.x,
+          ty: p.y,
+          facing: p.facing,
+          lastJumpAt: p.jumpAt ?? 0,
+        }
         this.peerMotion.set(p.id, motion)
       }
 
       motion.tx = p.x
       motion.ty = p.y
       motion.facing = p.facing
+      if (p.jumpAt && p.jumpAt !== motion.lastJumpAt) {
+        motion.lastJumpAt = p.jumpAt
+        avatar.triggerJump()
+      }
 
       const dx = motion.tx - motion.x
       const dy = motion.ty - motion.y
@@ -735,8 +752,9 @@ export class CampusScene {
 
     // Place camera at a rigid offset from the player every frame.
     // Over water, birds hover — keep camera aimed at flight height, not the pond bed
+    const air = this.player.airHeight()
     const focusY =
-      this.playerIsBird && (moving || overWater) ? Math.max(y, 0.12) + 0.7 : y
+      (this.playerIsBird && (moving || overWater) ? Math.max(y, 0.12) + 0.7 : y) + air
     this.camera.position.set(
       x + (camDirX / camDirLen) * followDist,
       focusY + followHeight,

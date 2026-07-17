@@ -122,12 +122,19 @@ export class RoomMedia {
           video: false,
         })
       }
+      let needRenegotiate = false
       for (const pc of this.pcs.values()) {
         for (const track of this.localStream.getTracks()) {
           const sender = pc.getSenders().find((s) => s.track?.kind === track.kind)
           if (sender) await sender.replaceTrack(track)
-          else pc.addTrack(track, this.localStream)
+          else {
+            pc.addTrack(track, this.localStream)
+            needRenegotiate = true
+          }
         }
+      }
+      if (needRenegotiate) {
+        for (const peerId of this.pcs.keys()) await this.renegotiate(peerId)
       }
     } else if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop())
@@ -151,10 +158,15 @@ export class RoomMedia {
     })
     this.onScreen(this.screenStream, this.selfId)
 
-    for (const [, pc] of this.pcs) {
+    // Mid-call addTrack must be followed by renegotiation or remotes never see the video.
+    for (const peerId of this.pcs.keys()) {
+      const pc = this.pcs.get(peerId)!
       for (const track of this.screenStream.getTracks()) {
-        pc.addTrack(track, this.screenStream)
+        if (!pc.getSenders().some((s) => s.track === track)) {
+          pc.addTrack(track, this.screenStream)
+        }
       }
+      await this.renegotiate(peerId)
     }
   }
 
@@ -188,6 +200,10 @@ export class RoomMedia {
 
     for (const peerId of peerIdsInRoom) {
       if (peerId === this.selfId) continue
+      const existing = this.pcs.get(peerId)
+      if (existing && this.isPcDead(existing)) {
+        this.closePeer(peerId)
+      }
       if (!this.pcs.has(peerId) && this.selfId < peerId) {
         await this.createOffer(peerId)
       }
@@ -200,8 +216,37 @@ export class RoomMedia {
     }
   }
 
+  /** Re-check room peers and revive dead links (e.g. after UI suspend / look edit). */
+  async refreshConnections(peerIdsInRoom: string[], forceRenegotiate = false) {
+    if (!this.roomId) return
+    await this.syncRoom(this.roomId, peerIdsInRoom)
+    for (const peerId of this.pcs.keys()) {
+      const pc = this.pcs.get(peerId)
+      if (!pc || this.isPcDead(pc)) continue
+      this.attachTracks(pc)
+      if (forceRenegotiate && pc.signalingState === 'stable' && this.selfId < peerId) {
+        await this.renegotiate(peerId)
+      }
+    }
+  }
+
+  private isPcDead(pc: RTCPeerConnection) {
+    const s = pc.connectionState
+    return s === 'failed' || s === 'closed' || s === 'disconnected'
+  }
+
   private async createOffer(peerId: string) {
-    const pc = this.ensurePc(peerId, true)
+    this.ensurePc(peerId, true)
+    await this.renegotiate(peerId)
+  }
+
+  /** Create/send SDP offer so remotes pick up newly added tracks (screen share, mic). */
+  private async renegotiate(peerId: string) {
+    const pc = this.pcs.get(peerId)
+    if (!pc || !this.roomId) return
+    if (this.makingOffer.has(peerId)) return
+    if (pc.signalingState !== 'stable') return
+
     this.makingOffer.add(peerId)
     try {
       this.attachTracks(pc)
@@ -211,7 +256,7 @@ export class RoomMedia {
       this.bus.sendSignal(peerId, {
         kind: 'offer',
         sdp: { type: ld.type, sdp: ld.sdp },
-        roomId: this.roomId!,
+        roomId: this.roomId,
       })
     } finally {
       this.makingOffer.delete(peerId)
@@ -263,7 +308,11 @@ export class RoomMedia {
       }
       this.onRemotes(new Map(this.remoteStreams))
       if (ev.track.kind === 'video') {
-        this.onScreen(new MediaStream([ev.track]), peerId)
+        const remote = ev.streams[0] ?? new MediaStream([ev.track])
+        this.onScreen(remote, peerId)
+        const clear = () => this.onScreen(null, null)
+        ev.track.addEventListener('ended', clear)
+        ev.track.addEventListener('mute', clear)
       }
     }
 
@@ -308,17 +357,26 @@ export class RoomMedia {
     if (data.kind === 'offer') {
       if (this.roomId && data.roomId !== this.roomId) return
       const pc = this.ensurePc(from, false)
+      // Glare: ignore remote offer while we are mid-offer to this peer.
       if (this.makingOffer.has(from)) return
-      await pc.setRemoteDescription(data.sdp)
-      this.attachTracks(pc)
-      const answer = await pc.createAnswer()
-      await pc.setLocalDescription(answer)
-      const ld = pc.localDescription!
-      this.bus.sendSignal(from, { kind: 'answer', sdp: { type: ld.type, sdp: ld.sdp } })
+      try {
+        await pc.setRemoteDescription(data.sdp)
+        this.attachTracks(pc)
+        const answer = await pc.createAnswer()
+        await pc.setLocalDescription(answer)
+        const ld = pc.localDescription!
+        this.bus.sendSignal(from, { kind: 'answer', sdp: { type: ld.type, sdp: ld.sdp } })
+      } catch {
+        /* renegotiation race — next offer/answer will recover */
+      }
     } else if (data.kind === 'answer') {
       const pc = this.pcs.get(from)
       if (!pc) return
-      await pc.setRemoteDescription(data.sdp)
+      try {
+        await pc.setRemoteDescription(data.sdp)
+      } catch {
+        /* ignore stale answers */
+      }
     } else if (data.kind === 'ice') {
       const pc = this.pcs.get(from)
       if (!pc) return

@@ -74,5 +74,6 @@ bash scripts/jenkins-restart.sh
 ## Controls
 
 - `WASD` หรือลูกศร — เดิน
+- `Space` — กระโดด (visual เท่านั้น ไม่ข้ามกำแพง/terrain)
 - เข้าในพื้นที่ห้องเพื่อเปิดไมค์ / แชร์จอ / Room chat
 - Global chat ใช้ได้ทุกที่ในแมพ

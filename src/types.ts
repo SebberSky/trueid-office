@@ -108,6 +108,8 @@ export interface PeerPresence {
   roomId: string | null
   voiceOn: boolean
   sharing: boolean
+  /** Timestamp of last jump start — remotes replay the hop when this changes. */
+  jumpAt?: number
   updatedAt: number
 }
 
