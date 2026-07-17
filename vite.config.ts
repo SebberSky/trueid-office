@@ -16,8 +16,7 @@ function lanHosts(): string[] {
 }
 
 // Default: HTTPS (basicSsl) so getUserMedia works on LAN IPs.
-// Funnel: VITE_DEV_HTTPS=0 → plain HTTP for Tailscale Funnel to terminate TLS
-// with a publicly trusted cert (https://*.ts.net).
+// Set VITE_DEV_HTTPS=0 for plain HTTP if needed.
 const useDevHttps = process.env.VITE_DEV_HTTPS !== '0'
 
 const plugins: PluginOption[] = [react()]
