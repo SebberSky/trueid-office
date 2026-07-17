@@ -1,0 +1,972 @@
+import * as THREE from 'three'
+import type { WorldMap } from './terrain'
+import { MAP_H, MAP_W, TILE, isWaterAt, roomAt, roomDoor } from './terrain'
+import { TERRAIN_HEIGHT, TERRAIN_HEX, surfaceY, toWorldXZ } from './heights'
+import { Character3D } from '../character/Character3D'
+import type { CharacterLook, Facing, PeerPresence, RoomDef } from '../types'
+import { normalizeAnimalKind } from '../types'
+
+/** 1 = max zoom in (character). Min zoom stays mid-range — no full-map pullback. */
+const ZOOM_DEFAULT = 0.42
+const ZOOM_MIN = 0.28
+const ROOM_WALL_H = 2.55
+const ROOM_ROOF_Y = 2.68
+
+export class CampusScene {
+  readonly renderer: THREE.WebGLRenderer
+  readonly scene = new THREE.Scene()
+  readonly camera: THREE.PerspectiveCamera
+  private player: Character3D
+  private playerIsBird = false
+  private peers = new Map<string, Character3D>()
+  private peerLastPos = new Map<string, { x: number; y: number }>()
+  private waterMeshes: THREE.Mesh[] = []
+  private roofs = new Map<string, THREE.Group>()
+  private clock = 0
+  /** South-side skyscrapers — faded when player is near the bottom map edge. */
+  private citySouth = new THREE.Group()
+  /** Smooth 0..1 hide amount for south skyline. */
+  private citySouthHide = 0
+  private lastCitySouthHideBucket = -1
+  /** Smooth zoom target & current in [0, 1]. */
+  private zoomTarget = ZOOM_DEFAULT
+  private zoom = ZOOM_DEFAULT
+
+  constructor(canvas: HTMLCanvasElement, map: WorldMap, look: CharacterLook) {
+    this.renderer = new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+      alpha: false,
+      powerPreference: 'high-performance',
+    })
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    this.renderer.shadowMap.enabled = true
+    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    this.renderer.toneMapping = THREE.ACESFilmicToneMapping
+    this.renderer.toneMappingExposure = 1.05
+
+    this.camera = new THREE.PerspectiveCamera(50, 1, 0.15, 200)
+    this.camera.position.set(0, 12, 14)
+
+    this.scene.background = new THREE.Color(0x8eb8d8)
+    this.scene.fog = new THREE.Fog(0xa8c8e0, 32, 90)
+
+    // lights
+    const hemi = new THREE.HemisphereLight(0xeaf4ff, 0x7a6a48, 0.95)
+    this.scene.add(hemi)
+    const sun = new THREE.DirectionalLight(0xfff0d8, 1.35)
+    sun.position.set(MAP_W / 2 + 30, 55, MAP_H / 2 + 22)
+    sun.target.position.set(MAP_W / 2, 0, MAP_H / 2)
+    this.scene.add(sun.target)
+    sun.castShadow = true
+    sun.shadow.mapSize.set(2048, 2048)
+    sun.shadow.camera.near = 1
+    sun.shadow.camera.far = 180
+    sun.shadow.camera.left = -55
+    sun.shadow.camera.right = 55
+    sun.shadow.camera.top = 55
+    sun.shadow.camera.bottom = -55
+    // normalBias stops ground shadow acne / crawling shimmer when camera is close
+    sun.shadow.bias = -0.0002
+    sun.shadow.normalBias = 0.04
+    this.scene.add(sun)
+
+    const fill = new THREE.DirectionalLight(0x8eb6ff, 0.32)
+    fill.position.set(-22, 12, -14)
+    this.scene.add(fill)
+
+    const rim = new THREE.DirectionalLight(0xffd4a8, 0.18)
+    rim.position.set(10, 6, -30)
+    this.scene.add(rim)
+
+    this.buildTerrain(map)
+    this.playerIsBird =
+      look.species === 'animal' && normalizeAnimalKind(look.animalKind) === 'bird'
+    this.player = new Character3D(look)
+    this.scene.add(this.player.root)
+  }
+
+  private buildTerrain(map: WorldMap) {
+    const ground = new THREE.Group()
+    this.scene.add(ground)
+
+    // Continuous underlay hides seams; sits below water so ponds stay blue
+    const underlay = new THREE.Mesh(
+      new THREE.BoxGeometry(MAP_W + 2, 0.2, MAP_H + 2),
+      new THREE.MeshStandardMaterial({ color: 0x4a8f42, roughness: 1, depthWrite: true }),
+    )
+    underlay.position.set(MAP_W / 2, -0.55, MAP_H / 2)
+    underlay.receiveShadow = true
+    ground.add(underlay)
+
+    const T = 1
+    const grassA = 0x5cad4f
+    const grassB = 0x4f9a45
+    const grassC = 0x6bb85a
+
+    for (let ty = 0; ty < MAP_H; ty++) {
+      for (let tx = 0; tx < MAP_W; tx++) {
+        const type = map.tiles[ty][tx]
+        const h = TERRAIN_HEIGHT[type]
+        let color = TERRAIN_HEX[type]
+        const n = (tx * 13 + ty * 7) % 17
+
+        if (type === 'grass') {
+          color = n % 3 === 0 ? grassA : n % 3 === 1 ? grassB : grassC
+        } else if (type === 'path' && n % 5 === 0) {
+          color = 0xbba888
+        } else if (type === 'plaza' && ((tx + ty) & 1) === 0) {
+          color = 0xe2be5c
+        }
+
+        if (type === 'water') {
+          // Opaque bed so green underlay never shows through
+          const bed = new THREE.Mesh(
+            new THREE.BoxGeometry(T, 0.18, T),
+            new THREE.MeshStandardMaterial({ color: 0x1a5f7a, roughness: 0.95 }),
+          )
+          bed.position.set(tx + 0.5, -0.42, ty + 0.5)
+          bed.receiveShadow = true
+          ground.add(bed)
+
+          const mesh = new THREE.Mesh(
+            new THREE.BoxGeometry(T, 0.2, T),
+            new THREE.MeshStandardMaterial({
+              color: 0x3a9fd0,
+              roughness: 0.15,
+              metalness: 0.22,
+              transparent: true,
+              opacity: 0.88,
+            }),
+          )
+          mesh.position.set(tx + 0.5, h, ty + 0.5)
+          mesh.receiveShadow = true
+          ground.add(mesh)
+          this.waterMeshes.push(mesh)
+          // lily / foam accents
+          if (n % 9 === 0) {
+            const pad = new THREE.Mesh(
+              new THREE.CylinderGeometry(0.16, 0.16, 0.04, 8),
+              new THREE.MeshStandardMaterial({ color: 0x3d8f45, roughness: 0.85 }),
+            )
+            pad.position.set(tx + 0.35 + (n % 3) * 0.12, h + 0.12, ty + 0.4)
+            ground.add(pad)
+          }
+          continue
+        }
+
+        const thickness = Math.max(0.12, Math.abs(h) + 0.15)
+        const y = h / 2
+
+        if (type === 'plant') {
+          addGrassTile(ground, tx, ty, T)
+          addTree(ground, tx + 0.5, ty + 0.5, 1 + (n % 3))
+          continue
+        }
+
+        if (type === 'desk') {
+          addDeskCluster(ground, tx, ty, T)
+          continue
+        }
+
+        if (type === 'wall') {
+          const inRoom = map.rooms.some(
+            (r) => tx >= r.x && tx < r.x + r.w && ty >= r.y && ty < r.y + r.h,
+          )
+          if (inRoom) continue
+        }
+
+        const mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(T, thickness, T),
+          new THREE.MeshStandardMaterial({
+            color,
+            roughness:
+              type === 'path' || type === 'floor' || type === 'plaza' ? 0.72 : type === 'sand' ? 0.95 : 0.88,
+            metalness: type === 'rock' ? 0.18 : 0.02,
+          }),
+        )
+        mesh.position.set(tx + 0.5, y, ty + 0.5)
+        mesh.castShadow = type === 'wall' || type === 'rock'
+        mesh.receiveShadow = true
+        ground.add(mesh)
+
+        // --- Decorations (visual only, walkability unchanged) ---
+        if (type === 'grass') {
+          if (n % 7 === 0) addGrassTufts(ground, tx, ty, h)
+          if (n % 19 === 0) addFlower(ground, tx + 0.35, h + 0.08, ty + 0.4, 0xf472b6)
+          if (n % 23 === 0) addFlower(ground, tx + 0.65, h + 0.08, ty + 0.55, 0xfbbf24)
+          if (n % 29 === 0) addBush(ground, tx + 0.5, ty + 0.5)
+        }
+
+        if (type === 'sand' && n % 8 === 0) {
+          const pebble = new THREE.Mesh(
+            new THREE.BoxGeometry(0.12, 0.08, 0.1),
+            new THREE.MeshStandardMaterial({ color: 0xa89870, roughness: 0.9 }),
+          )
+          pebble.position.set(tx + 0.3 + (n % 4) * 0.1, h + 0.05, ty + 0.4)
+          ground.add(pebble)
+        }
+
+        if (type === 'rock') {
+          addRockCluster(ground, tx + 0.5, ty + 0.5, h)
+        }
+
+        if (type === 'path') {
+          // cobble / edge stones
+          if (n % 4 === 0) {
+            const stone = new THREE.Mesh(
+              new THREE.BoxGeometry(0.22, 0.06, 0.18),
+              new THREE.MeshStandardMaterial({ color: 0x9a8b72, roughness: 0.8 }),
+            )
+            stone.position.set(tx + 0.25, h + 0.04, ty + 0.3)
+            ground.add(stone)
+          }
+          // path lamps at intersections-ish
+          if (tx % 12 === 4 && ty % 12 === 3) {
+            addPathLamp(ground, tx + 0.5, ty + 0.5)
+          }
+        }
+
+        if (type === 'plazaBorder' && n % 3 === 0) {
+          const bead = new THREE.Mesh(
+            new THREE.BoxGeometry(0.18, 0.1, 0.18),
+            new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.6, metalness: 0.15 }),
+          )
+          bead.position.set(tx + 0.5, h + 0.08, ty + 0.5)
+          ground.add(bead)
+        }
+      }
+    }
+
+    for (const room of map.rooms) {
+      if (room.kind === 'plaza') this.buildPlazaShell(ground, room)
+      else this.buildRoomShell(ground, room)
+    }
+
+    this.buildCityscape(ground)
+  }
+
+  /** Single ring of tall buildings just outside the playable map (lightweight). */
+  private buildCityscape(ground: THREE.Group) {
+    const pad = 8
+    const city = new THREE.Group()
+    ground.add(city)
+    this.citySouth.clear()
+    city.add(this.citySouth)
+
+    const apron = new THREE.Mesh(
+      new THREE.BoxGeometry(MAP_W + pad * 2, 0.4, MAP_H + pad * 2),
+      new THREE.MeshStandardMaterial({ color: 0x3a4555, roughness: 0.92 }),
+    )
+    apron.position.set(MAP_W / 2, -0.25, MAP_H / 2)
+    apron.receiveShadow = true
+    city.add(apron)
+
+    const palette = [0x4b5568, 0x374151, 0x5b6b7c, 0x2f3a48, 0x6b7280, 0x455a6e]
+    const glass = [0x88b4d8, 0x6a9fc4, 0xa8c8e0, 0x5a8aaa]
+
+    const placeBuilding = (bx: number, bz: number, seed: number, parent: THREE.Group) => {
+      if (bx > -1.2 && bx < MAP_W + 1.2 && bz > -1.2 && bz < MAP_H + 1.2) return
+
+      const h = 4.5 + (seed % 14) * 0.75 + ((seed * 3) % 5) * 0.3
+      const w = 1.5 + (seed % 4) * 0.4
+      const d = 1.5 + ((seed * 7) % 4) * 0.35
+      const tower = new THREE.Group()
+      const body = new THREE.Mesh(
+        new THREE.BoxGeometry(w, h, d),
+        new THREE.MeshStandardMaterial({
+          color: palette[seed % palette.length],
+          roughness: 0.75,
+          metalness: 0.12,
+          transparent: true,
+          opacity: 1,
+        }),
+      )
+      body.position.set(bx, h / 2, bz)
+      body.castShadow = true
+      body.receiveShadow = true
+      tower.add(body)
+
+      for (let f = 2; f < h - 1; f += 2.4) {
+        if ((seed + Math.floor(f)) % 3 === 0) continue
+        const band = new THREE.Mesh(
+          new THREE.BoxGeometry(w * 0.9, 0.1, d * 0.9),
+          new THREE.MeshStandardMaterial({
+            color: glass[seed % glass.length],
+            emissive: glass[seed % glass.length],
+            emissiveIntensity: 0.16,
+            roughness: 0.4,
+            metalness: 0.35,
+            transparent: true,
+            opacity: 1,
+          }),
+        )
+        band.position.set(bx, f, bz)
+        tower.add(band)
+      }
+      parent.add(tower)
+    }
+
+    // First ring only — buildings along the four sides
+    let i = 0
+    const step = 2.6
+    const ring = pad - 1.5
+    for (let x = -ring; x <= MAP_W + ring; x += step) {
+      placeBuilding(x, -ring, i++ * 31, city) // north — keep
+      placeBuilding(x + 0.3, MAP_H + ring, i++ * 47, this.citySouth) // south — hide near edge
+    }
+    for (let z = -ring + step; z <= MAP_H + ring - step; z += step) {
+      // Southern half of E/W towers also blocks the SE camera near the bottom edge
+      const parent = z > MAP_H - 8 ? this.citySouth : city
+      placeBuilding(-ring, z, i++ * 53, parent)
+      placeBuilding(MAP_W + ring, z + 0.2, i++ * 59, parent)
+    }
+  }
+
+  private buildPlazaShell(ground: THREE.Group, room: RoomDef) {
+    const accent = new THREE.Color(room.color)
+    const postMat = new THREE.MeshStandardMaterial({
+      color: accent,
+      roughness: 0.5,
+      metalness: 0.12,
+    })
+    const woodMat = new THREE.MeshStandardMaterial({ color: 0x8b6914, roughness: 0.75 })
+    const cx = room.x + room.w / 2
+    const cz = room.y + room.h / 2
+
+    const posts: [number, number][] = [
+      [room.x + 0.5, room.y + 0.5],
+      [room.x + room.w - 0.5, room.y + 0.5],
+      [room.x + 0.5, room.y + room.h - 0.5],
+      [room.x + room.w - 0.5, room.y + room.h - 0.5],
+      [room.x + room.w / 2, room.y + 0.5],
+      [room.x + room.w / 2, room.y + room.h - 0.5],
+      [room.x + 0.5, room.y + room.h / 2],
+      [room.x + room.w - 0.5, room.y + room.h / 2],
+    ]
+    for (const [px, pz] of posts) {
+      const post = new THREE.Mesh(new THREE.BoxGeometry(0.3, 1.35, 0.3), postMat)
+      post.position.set(px, 0.68, pz)
+      post.castShadow = true
+      ground.add(post)
+      const lamp = new THREE.Mesh(
+        new THREE.BoxGeometry(0.22, 0.22, 0.22),
+        new THREE.MeshStandardMaterial({
+          color: 0xfff1c1,
+          emissive: 0xffaa33,
+          emissiveIntensity: 0.75,
+        }),
+      )
+      lamp.position.set(px, 1.45, pz)
+      ground.add(lamp)
+      // string-light blob toward center
+      const wire = new THREE.Mesh(
+        new THREE.BoxGeometry(0.06, 0.06, 0.06),
+        new THREE.MeshStandardMaterial({
+          color: 0xffe08a,
+          emissive: 0xffcc66,
+          emissiveIntensity: 0.5,
+        }),
+      )
+      wire.position.set((px + cx) / 2, 1.55, (pz + cz) / 2)
+      ground.add(wire)
+    }
+
+    // Stage platform (north side of plaza)
+    const stage = new THREE.Mesh(
+      new THREE.BoxGeometry(Math.min(8, room.w - 4), 0.28, 3.2),
+      new THREE.MeshStandardMaterial({ color: 0x7c5a2e, roughness: 0.7 }),
+    )
+    stage.position.set(cx, 0.28, room.y + 2.2)
+    stage.castShadow = true
+    stage.receiveShadow = true
+    ground.add(stage)
+    const stageTrim = new THREE.Mesh(
+      new THREE.BoxGeometry(Math.min(8.2, room.w - 3.6), 0.08, 0.2),
+      postMat,
+    )
+    stageTrim.position.set(cx, 0.42, room.y + 3.75)
+    ground.add(stageTrim)
+
+    // Benches facing center
+    addBench(ground, cx - 4.5, cz + 2.5, woodMat, 0)
+    addBench(ground, cx + 4.5, cz + 2.5, woodMat, 0)
+    addBench(ground, cx - 4.5, cz - 2.8, woodMat, Math.PI)
+    addBench(ground, cx + 4.5, cz - 2.8, woodMat, Math.PI)
+
+    // Planters
+    addPlanter(ground, room.x + 2.5, room.y + room.h - 2.5, accent)
+    addPlanter(ground, room.x + room.w - 2.5, room.y + room.h - 2.5, accent)
+    addPlanter(ground, room.x + 2.5, room.y + 4.5, accent)
+    addPlanter(ground, room.x + room.w - 2.5, room.y + 4.5, accent)
+
+    // Name plate center
+    const plazaH = TERRAIN_HEIGHT.plaza
+    const tileThick = Math.max(0.12, Math.abs(plazaH) + 0.15)
+    const floorTop = plazaH / 2 + tileThick / 2
+    const plate = makeFloorPlate(`${room.name} · ไม่จำกัด`, room.color, 7.5, 1.6)
+    plate.position.set(cx, floorTop + 0.04, cz + 1.2)
+    ground.add(plate)
+  }
+
+  private buildRoomShell(ground: THREE.Group, room: RoomDef) {
+    const door = roomDoor(room)
+    const accent = new THREE.Color(room.color)
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: 0x4a5568,
+      roughness: 0.85,
+      metalness: 0.05,
+    })
+    const trimMat = new THREE.MeshStandardMaterial({
+      color: accent,
+      roughness: 0.55,
+      metalness: 0.1,
+    })
+
+    const addWall = (x: number, z: number, w: number, d: number) => {
+      if (w < 0.35 || d < 0.35) return
+      const panel = new THREE.Mesh(new THREE.BoxGeometry(w, ROOM_WALL_H, d), wallMat)
+      panel.position.set(x, ROOM_WALL_H / 2, z)
+      panel.castShadow = true
+      panel.receiveShadow = true
+      ground.add(panel)
+      const band = new THREE.Mesh(new THREE.BoxGeometry(w + 0.02, 0.12, d + 0.02), trimMat)
+      band.position.set(x, ROOM_WALL_H - 0.2, z)
+      ground.add(band)
+    }
+
+    const thick = 0.85
+    const rx = room.x
+    const ry = room.y
+    const rw = room.w
+    const rh = room.h
+
+    // Build each facade; split the door wall into two segments
+    if (room.door === 'n') {
+      const leftW = door.doorX - rx
+      const rightW = rx + rw - 1 - door.doorX2
+      addWall(rx + leftW / 2, ry + 0.5, leftW - 0.05, thick)
+      addWall(door.doorX2 + 1 + rightW / 2, ry + 0.5, rightW - 0.05, thick)
+    } else {
+      addWall(rx + rw / 2, ry + 0.5, rw - 0.05, thick)
+    }
+
+    if (room.door === 's') {
+      const leftW = door.doorX - rx
+      const rightW = rx + rw - 1 - door.doorX2
+      const z = ry + rh - 0.5
+      addWall(rx + leftW / 2, z, leftW - 0.05, thick)
+      addWall(door.doorX2 + 1 + rightW / 2, z, rightW - 0.05, thick)
+    } else {
+      addWall(rx + rw / 2, ry + rh - 0.5, rw - 0.05, thick)
+    }
+
+    if (room.door === 'w') {
+      const topH = door.doorY - ry
+      const botH = ry + rh - 1 - door.doorY2
+      addWall(rx + 0.5, ry + topH / 2, thick, topH - 0.05)
+      addWall(rx + 0.5, door.doorY2 + 1 + botH / 2, thick, botH - 0.05)
+    } else {
+      addWall(rx + 0.5, ry + rh / 2, thick, rh - 0.05)
+    }
+
+    if (room.door === 'e') {
+      const topH = door.doorY - ry
+      const botH = ry + rh - 1 - door.doorY2
+      const x = rx + rw - 0.5
+      addWall(x, ry + topH / 2, thick, topH - 0.05)
+      addWall(x, door.doorY2 + 1 + botH / 2, thick, botH - 0.05)
+    } else {
+      addWall(rx + rw - 0.5, ry + rh / 2, thick, rh - 0.05)
+    }
+
+    // Door frame
+    const frameH = ROOM_WALL_H * 0.72
+    let frameX = 0
+    let frameZ = 0
+    let lintelW = 2.3
+    let lintelD = 0.28
+    if (room.door === 's') {
+      frameX = door.doorX + 1
+      frameZ = door.doorY + 0.55
+      ground.add(framePost(door.doorX + 0.05, frameZ, frameH, trimMat))
+      ground.add(framePost(door.doorX2 + 0.95, frameZ, frameH, trimMat))
+    } else if (room.door === 'n') {
+      frameX = door.doorX + 1
+      frameZ = door.doorY - 0.55
+      ground.add(framePost(door.doorX + 0.05, frameZ, frameH, trimMat))
+      ground.add(framePost(door.doorX2 + 0.95, frameZ, frameH, trimMat))
+    } else if (room.door === 'e') {
+      frameX = door.doorX + 0.55
+      frameZ = door.doorY + 1
+      lintelW = 0.28
+      lintelD = 2.3
+      ground.add(framePost(frameX, door.doorY + 0.05, frameH, trimMat))
+      ground.add(framePost(frameX, door.doorY2 + 0.95, frameH, trimMat))
+    } else {
+      frameX = door.doorX - 0.55
+      frameZ = door.doorY + 1
+      lintelW = 0.28
+      lintelD = 2.3
+      ground.add(framePost(frameX, door.doorY + 0.05, frameH, trimMat))
+      ground.add(framePost(frameX, door.doorY2 + 0.95, frameH, trimMat))
+    }
+    const lintel = new THREE.Mesh(new THREE.BoxGeometry(lintelW, 0.22, lintelD), trimMat)
+    lintel.position.set(frameX, frameH + 0.1, frameZ)
+    ground.add(lintel)
+
+    const roofMat = new THREE.MeshStandardMaterial({
+      color: accent.clone().multiplyScalar(0.55),
+      roughness: 0.7,
+      metalness: 0.08,
+      transparent: true,
+      opacity: 0.96,
+      depthWrite: true,
+    })
+    const roofGroup = new THREE.Group()
+    const roof = new THREE.Mesh(
+      new THREE.BoxGeometry(room.w + 0.55, 0.16, room.h + 0.55),
+      roofMat,
+    )
+    roof.position.set(room.x + room.w / 2, ROOM_ROOF_Y, room.y + room.h / 2)
+    roof.castShadow = true
+    roof.receiveShadow = true
+    roofGroup.add(roof)
+
+    const ridge = new THREE.Mesh(
+      new THREE.BoxGeometry(room.w + 0.2, 0.1, 0.35),
+      new THREE.MeshStandardMaterial({
+        color: accent,
+        roughness: 0.5,
+        transparent: true,
+        opacity: 0.96,
+        depthWrite: true,
+      }),
+    )
+    ridge.position.set(room.x + room.w / 2, ROOM_ROOF_Y + 0.12, room.y + room.h / 2)
+    roofGroup.add(ridge)
+
+    ground.add(roofGroup)
+    this.roofs.set(room.id, roofGroup)
+
+    // Name plate flush on the outer door wall (solid mesh, not a billboard)
+    const signW = Math.min(3.2, Math.max(1.8, room.name.length * 0.28))
+    const signH = 0.58
+    const plate = makeWallPlate(room.name, room.color, signW, signH)
+
+    const rightStart = door.doorX2 + 1
+    const rightEnd = rx + rw
+    const leftStart = rx
+    const leftEnd = door.doorX
+    let sx: number
+    if (rightEnd - rightStart >= signW + 0.25) {
+      sx = (rightStart + rightEnd) / 2
+    } else if (leftEnd - leftStart >= signW + 0.25) {
+      sx = (leftStart + leftEnd) / 2
+    } else {
+      sx = door.doorX + 1
+    }
+
+    if (room.door === 's') {
+      plate.position.set(sx, 1.72, ry + rh - 0.5 + thick / 2 + 0.045)
+    } else if (room.door === 'n') {
+      plate.position.set(sx, 1.72, ry + 0.5 - thick / 2 - 0.045)
+    } else if (room.door === 'e') {
+      plate.rotation.y = Math.PI / 2
+      plate.position.set(rx + rw - 0.5 + thick / 2 + 0.045, 1.72, door.doorY2 + 1.5)
+    } else {
+      plate.rotation.y = Math.PI / 2
+      plate.position.set(rx + 0.5 - thick / 2 - 0.045, 1.72, door.doorY2 + 1.5)
+    }
+    ground.add(plate)
+  }
+
+  setSize(w: number, h: number) {
+    this.camera.aspect = w / Math.max(1, h)
+    this.camera.updateProjectionMatrix()
+    this.renderer.setSize(w, h, false)
+  }
+
+  /** Positive delta = zoom in, negative = zoom out. */
+  adjustZoom(delta: number) {
+    this.zoomTarget = Math.min(1, Math.max(ZOOM_MIN, this.zoomTarget + delta))
+  }
+
+  getZoom() {
+    return this.zoomTarget
+  }
+
+  syncPeers(peers: PeerPresence[], map: WorldMap, dt = 0) {
+    const seen = new Set<string>()
+    for (const p of peers) {
+      seen.add(p.id)
+      let avatar = this.peers.get(p.id)
+      if (!avatar) {
+        avatar = new Character3D(p.look)
+        this.peers.set(p.id, avatar)
+        this.scene.add(avatar.root)
+      }
+      const { x, z } = toWorldXZ(p.x, p.y)
+      const y = surfaceY(map, p.x, p.y)
+      const prev = this.peerLastPos.get(p.id)
+      const moving = prev ? Math.hypot(p.x - prev.x, p.y - prev.y) > 0.8 : false
+      this.peerLastPos.set(p.id, { x: p.x, y: p.y })
+      const isBird =
+        p.look.species === 'animal' && normalizeAnimalKind(p.look.animalKind) === 'bird'
+      const overWater = isBird && isWaterAt(map, p.x, p.y)
+      avatar.setPose(x, z, y, p.facing, moving, dt, overWater)
+    }
+    for (const [id, avatar] of this.peers) {
+      if (!seen.has(id)) {
+        this.scene.remove(avatar.root)
+        avatar.dispose()
+        this.peers.delete(id)
+        this.peerLastPos.delete(id)
+      }
+    }
+  }
+
+  render(
+    map: WorldMap,
+    px: number,
+    py: number,
+    facing: Facing,
+    moving: boolean,
+    dt: number,
+  ) {
+    this.clock += dt
+    for (const w of this.waterMeshes) {
+      w.position.y = TERRAIN_HEIGHT.water + Math.sin(this.clock * 2 + w.position.x) * 0.03
+    }
+
+    const { x, z } = toWorldXZ(px, py)
+    const y = surfaceY(map, px, py)
+    const overWater = isWaterAt(map, px, py)
+    this.player.setPose(x, z, y, facing, moving, dt, overWater)
+
+    // Soften / hide roof + beams when standing inside that room so the camera isn't blocked
+    const inside = roomAt(map, px, py)
+    for (const room of map.rooms) {
+      const roofGroup = this.roofs.get(room.id)
+      if (!roofGroup) continue
+      const hide = inside?.id === room.id
+      roofGroup.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return
+        const mat = obj.material as THREE.MeshStandardMaterial
+        if (!mat || !('opacity' in mat)) return
+        mat.transparent = true
+        mat.opacity = hide ? 0.08 : 0.96
+        mat.depthWrite = !hide
+      })
+    }
+
+    // Near south (bottom) edge: fade south skyline so camera/character aren't buried in towers
+    const southDist = MAP_H - z
+    const hideTarget = southDist < 14 ? 1 - Math.min(1, Math.max(0, southDist / 14)) : 0
+    this.citySouthHide += (hideTarget - this.citySouthHide) * (1 - Math.exp(-6 * dt))
+    if (this.citySouthHide < 0.001) this.citySouthHide = 0
+    const hideBucket = Math.round(this.citySouthHide * 40)
+    if (hideBucket !== this.lastCitySouthHideBucket) {
+      this.lastCitySouthHideBucket = hideBucket
+      const skyOpacity = 1 - this.citySouthHide * 0.92
+      this.citySouth.traverse((obj) => {
+        if (!(obj instanceof THREE.Mesh)) return
+        const mat = obj.material as THREE.MeshStandardMaterial
+        if (!mat || !('opacity' in mat)) return
+        mat.transparent = true
+        mat.opacity = skyOpacity
+        mat.depthWrite = this.citySouthHide < 0.35
+        obj.castShadow = this.citySouthHide < 0.5
+      })
+      this.citySouth.scale.y = 1 - this.citySouthHide * 0.85
+    }
+
+    this.zoom += (this.zoomTarget - this.zoom) * (1 - Math.exp(-8 * dt))
+    if (Math.abs(this.zoomTarget - this.zoom) < 0.0003) this.zoom = this.zoomTarget
+    const t = this.zoom
+
+    // Fixed camera angle (does not rotate with character facing) —
+    // south-east of the player so WASD stays screen-stable.
+    const camDirX = 0.42
+    const camDirZ = 1
+    const camDirLen = Math.hypot(camDirX, camDirZ)
+
+    // Follow-only camera — zoom out stays local (no full-map overview / sky gaps)
+    const closeDist = 2.6
+    const closeHeight = 2.05
+    const farDist = 11
+    const farHeight = 9.5
+    const blend = Math.min(1, Math.max(0, (t - ZOOM_MIN) / (1 - ZOOM_MIN)))
+    const followDist = farDist + (closeDist - farDist) * blend
+    const followHeight = farHeight + (closeHeight - farHeight) * blend
+
+    // Place camera at a rigid offset from the player every frame.
+    // Over water, birds hover — keep camera aimed at flight height, not the pond bed
+    const focusY =
+      this.playerIsBird && (moving || overWater) ? Math.max(y, 0.12) + 0.7 : y
+    this.camera.position.set(
+      x + (camDirX / camDirLen) * followDist,
+      focusY + followHeight,
+      z + (camDirZ / camDirLen) * followDist,
+    )
+    this.camera.lookAt(x, focusY + 0.75 + blend * 0.35, z)
+
+    this.renderer.render(this.scene, this.camera)
+  }
+
+  dispose() {
+    this.player.dispose()
+    for (const a of this.peers.values()) a.dispose()
+    this.roofs.clear()
+    this.renderer.dispose()
+  }
+}
+
+export { TILE }
+
+function addGrassTile(ground: THREE.Group, tx: number, ty: number, T: number) {
+  const base = new THREE.Mesh(
+    new THREE.BoxGeometry(T, 0.18, T),
+    new THREE.MeshStandardMaterial({ color: TERRAIN_HEX.grass, roughness: 0.9 }),
+  )
+  base.position.set(tx + 0.5, 0.09, ty + 0.5)
+  base.receiveShadow = true
+  ground.add(base)
+}
+
+function addTree(ground: THREE.Group, x: number, z: number, variant: number) {
+  const trunkH = 0.45 + variant * 0.12
+  const trunk = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.06, 0.09, trunkH, 6),
+    new THREE.MeshStandardMaterial({ color: 0x5c3a1e, roughness: 0.9 }),
+  )
+  trunk.position.set(x, trunkH / 2 + 0.1, z)
+  trunk.castShadow = true
+  ground.add(trunk)
+
+  const greens = [0x2d6b3a, 0x3d8f48, 0x245c30]
+  for (let i = 0; i < 2 + (variant % 2); i++) {
+    const r = 0.32 + i * 0.08 + variant * 0.04
+    const canopy = new THREE.Mesh(
+      new THREE.SphereGeometry(r, 10, 8),
+      new THREE.MeshStandardMaterial({ color: greens[i % 3], roughness: 0.82 }),
+    )
+    canopy.position.set(x + (i - 1) * 0.08, trunkH + 0.25 + i * 0.18, z + (i % 2) * 0.05)
+    canopy.castShadow = true
+    ground.add(canopy)
+  }
+}
+
+function addGrassTufts(ground: THREE.Group, tx: number, ty: number, h: number) {
+  for (let i = 0; i < 3; i++) {
+    const tuft = new THREE.Mesh(
+      new THREE.ConeGeometry(0.04 + i * 0.01, 0.14 + i * 0.03, 5),
+      new THREE.MeshStandardMaterial({ color: 0x3d7a32, roughness: 1 }),
+    )
+    tuft.position.set(tx + 0.3 + i * 0.15, h + 0.07, ty + 0.35 + (i % 2) * 0.12)
+    ground.add(tuft)
+  }
+}
+
+function addFlower(ground: THREE.Group, x: number, y: number, z: number, color: number) {
+  const stem = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.015, 0.015, 0.12, 4),
+    new THREE.MeshStandardMaterial({ color: 0x3d7a32 }),
+  )
+  stem.position.set(x, y + 0.06, z)
+  ground.add(stem)
+  const bloom = new THREE.Mesh(
+    new THREE.SphereGeometry(0.06, 6, 6),
+    new THREE.MeshStandardMaterial({ color, roughness: 0.7 }),
+  )
+  bloom.position.set(x, y + 0.14, z)
+  ground.add(bloom)
+}
+
+function addBush(ground: THREE.Group, x: number, z: number) {
+  for (let i = 0; i < 3; i++) {
+    const bush = new THREE.Mesh(
+      new THREE.SphereGeometry(0.18 + i * 0.04, 8, 6),
+      new THREE.MeshStandardMaterial({ color: 0x2f6b38, roughness: 0.9 }),
+    )
+    bush.position.set(x + (i - 1) * 0.12, 0.22, z + (i % 2) * 0.08)
+    bush.castShadow = true
+    ground.add(bush)
+  }
+}
+
+function addRockCluster(ground: THREE.Group, x: number, z: number, h: number) {
+  for (let i = 0; i < 3; i++) {
+    const rock = new THREE.Mesh(
+      new THREE.BoxGeometry(0.25 + i * 0.08, 0.2 + i * 0.1, 0.22 + i * 0.05),
+      new THREE.MeshStandardMaterial({ color: 0x7a8088, roughness: 0.85, metalness: 0.12 }),
+    )
+    rock.position.set(x + (i - 1) * 0.15, h * 0.35 + i * 0.05, z + (i % 2) * 0.1)
+    rock.rotation.y = i * 0.4
+    rock.castShadow = true
+    ground.add(rock)
+  }
+}
+
+function addPathLamp(ground: THREE.Group, x: number, z: number) {
+  const pole = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.04, 0.05, 1.4, 6),
+    new THREE.MeshStandardMaterial({ color: 0x374151, roughness: 0.6, metalness: 0.3 }),
+  )
+  pole.position.set(x, 0.7, z)
+  pole.castShadow = true
+  ground.add(pole)
+  const lamp = new THREE.Mesh(
+    new THREE.BoxGeometry(0.22, 0.18, 0.22),
+    new THREE.MeshStandardMaterial({
+      color: 0xfff4c8,
+      emissive: 0xffc857,
+      emissiveIntensity: 0.65,
+    }),
+  )
+  lamp.position.set(x, 1.45, z)
+  ground.add(lamp)
+}
+
+function addDeskCluster(ground: THREE.Group, tx: number, ty: number, T: number) {
+  const floor = new THREE.Mesh(
+    new THREE.BoxGeometry(T, 0.16, T),
+    new THREE.MeshStandardMaterial({ color: TERRAIN_HEX.floor, roughness: 0.85 }),
+  )
+  floor.position.set(tx + 0.5, 0.08, ty + 0.5)
+  floor.receiveShadow = true
+  ground.add(floor)
+
+  const top = new THREE.Mesh(
+    new THREE.BoxGeometry(0.72, 0.08, 0.48),
+    new THREE.MeshStandardMaterial({ color: 0x8b6914, roughness: 0.55 }),
+  )
+  top.position.set(tx + 0.5, 0.45, ty + 0.5)
+  top.castShadow = true
+  ground.add(top)
+
+  const legL = new THREE.Mesh(
+    new THREE.BoxGeometry(0.06, 0.35, 0.06),
+    new THREE.MeshStandardMaterial({ color: 0x5c4010 }),
+  )
+  const legR = legL.clone()
+  legL.position.set(tx + 0.25, 0.25, ty + 0.35)
+  legR.position.set(tx + 0.75, 0.25, ty + 0.65)
+  ground.add(legL, legR)
+
+  const screen = new THREE.Mesh(
+    new THREE.BoxGeometry(0.38, 0.24, 0.04),
+    new THREE.MeshStandardMaterial({
+      color: 0x9ad0ff,
+      emissive: 0x224466,
+      emissiveIntensity: 0.45,
+    }),
+  )
+  screen.position.set(tx + 0.5, 0.64, ty + 0.32)
+  ground.add(screen)
+
+  const mug = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.05, 0.05, 0.08, 8),
+    new THREE.MeshStandardMaterial({ color: 0xc8102e }),
+  )
+  mug.position.set(tx + 0.72, 0.54, ty + 0.58)
+  ground.add(mug)
+}
+
+function addBench(
+  ground: THREE.Group,
+  x: number,
+  z: number,
+  mat: THREE.Material,
+  rotY: number,
+) {
+  const g = new THREE.Group()
+  const seat = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.1, 0.4), mat)
+  seat.position.y = 0.35
+  const back = new THREE.Mesh(new THREE.BoxGeometry(1.4, 0.35, 0.08), mat)
+  back.position.set(0, 0.55, -0.16)
+  const leg1 = new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.35, 0.08), mat)
+  const leg2 = leg1.clone()
+  leg1.position.set(-0.55, 0.175, 0.1)
+  leg2.position.set(0.55, 0.175, 0.1)
+  g.add(seat, back, leg1, leg2)
+  g.position.set(x, 0, z)
+  g.rotation.y = rotY
+  ground.add(g)
+}
+
+function addPlanter(ground: THREE.Group, x: number, z: number, accent: THREE.Color) {
+  const pot = new THREE.Mesh(
+    new THREE.BoxGeometry(0.7, 0.35, 0.7),
+    new THREE.MeshStandardMaterial({ color: accent, roughness: 0.65 }),
+  )
+  pot.position.set(x, 0.2, z)
+  pot.castShadow = true
+  ground.add(pot)
+  const soil = new THREE.Mesh(
+    new THREE.BoxGeometry(0.55, 0.08, 0.55),
+    new THREE.MeshStandardMaterial({ color: 0x3d2914, roughness: 1 }),
+  )
+  soil.position.set(x, 0.4, z)
+  ground.add(soil)
+  addBush(ground, x, z)
+}
+
+function framePost(x: number, z: number, h: number, mat: THREE.Material) {
+  const post = new THREE.Mesh(new THREE.BoxGeometry(0.18, h, 0.22), mat)
+  post.position.set(x, h / 2, z)
+  post.castShadow = true
+  return post
+}
+
+/** Solid wall-mounted name plate (box mesh + canvas texture). */
+function makeWallPlate(text: string, color: string, w: number, h: number) {
+  const mat = makeSignMaterial(text, color)
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(w, h, 0.1), mat)
+  plate.castShadow = true
+  plate.receiveShadow = true
+  return plate
+}
+
+/** Flat floor decal — lies on XZ, readable from above. */
+function makeFloorPlate(text: string, color: string, w: number, d: number) {
+  const mat = makeSignMaterial(text, color)
+  // Thin slab: width X, thickness Y, depth Z — no rotation needed
+  const plate = new THREE.Mesh(new THREE.BoxGeometry(w, 0.08, d), mat)
+  plate.castShadow = true
+  plate.receiveShadow = true
+  return plate
+}
+
+function makeSignMaterial(text: string, color: string) {
+  const canvas = document.createElement('canvas')
+  canvas.width = 1024
+  canvas.height = 256
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = color
+  ctx.fillRect(0, 0, 1024, 256)
+  // Dark inset so it reads on yellow plaza tiles
+  ctx.fillStyle = 'rgba(0,0,0,0.35)'
+  ctx.fillRect(24, 24, 976, 208)
+  ctx.strokeStyle = 'rgba(255,255,255,0.85)'
+  ctx.lineWidth = 10
+  ctx.strokeRect(24, 24, 976, 208)
+  ctx.fillStyle = '#ffffff'
+  ctx.font = '700 72px Bricolage Grotesque, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(text, 512, 132, 920)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 8
+  return new THREE.MeshStandardMaterial({
+    map: tex,
+    roughness: 0.85,
+    metalness: 0.05,
+    emissive: new THREE.Color(color),
+    emissiveIntensity: 0.15,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+    polygonOffsetUnits: -2,
+  })
+}

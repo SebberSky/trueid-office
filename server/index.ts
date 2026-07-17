@@ -1,0 +1,192 @@
+import http from 'node:http'
+import { WebSocketServer, type WebSocket } from 'ws'
+import type { PeerPresence } from '../src/types'
+import type { ClientMsg, ServerMsg } from '../shared/protocol'
+import { ensureDataDir, loadAppearance, saveAppearance } from './appearances'
+
+const PORT = Number(process.env.PORT || 3001)
+const STALE_MS = 5000
+
+type Client = {
+  ws: WebSocket
+  id: string | null
+  email: string | null
+  peer: PeerPresence | null
+}
+
+const clients = new Set<Client>()
+
+function send(ws: WebSocket, msg: ServerMsg) {
+  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
+}
+
+function broadcast(msg: ServerMsg, except?: WebSocket) {
+  const raw = JSON.stringify(msg)
+  for (const c of clients) {
+    if (c.ws !== except && c.ws.readyState === c.ws.OPEN) c.ws.send(raw)
+  }
+}
+
+function livePeers(): PeerPresence[] {
+  const now = Date.now()
+  const out: PeerPresence[] = []
+  for (const c of clients) {
+    if (!c.peer) continue
+    if (now - c.peer.updatedAt > STALE_MS) continue
+    out.push(c.peer)
+  }
+  return out
+}
+
+function readBody(req: http.IncomingMessage): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const chunks: Buffer[] = []
+    req.on('data', (c) => chunks.push(c))
+    req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')))
+    req.on('error', reject)
+  })
+}
+
+function cors(res: http.ServerResponse) {
+  res.setHeader('Access-Control-Allow-Origin', '*')
+  res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,OPTIONS')
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+}
+
+const server = http.createServer(async (req, res) => {
+  cors(res)
+  if (req.method === 'OPTIONS') {
+    res.writeHead(204)
+    res.end()
+    return
+  }
+
+  const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`)
+
+  if (req.method === 'GET' && url.pathname === '/api/health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ ok: true, peers: livePeers().length }))
+    return
+  }
+
+  if (req.method === 'GET' && url.pathname === '/api/appearance') {
+    const email = url.searchParams.get('email')?.trim().toLowerCase()
+    if (!email) {
+      res.writeHead(400, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'email required' }))
+      return
+    }
+    const look = await loadAppearance(email)
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify({ look }))
+    return
+  }
+
+  if (req.method === 'PUT' && url.pathname === '/api/appearance') {
+    try {
+      const body = JSON.parse(await readBody(req)) as { email?: string; look?: unknown }
+      const email = body.email?.trim().toLowerCase()
+      if (!email || !body.look || typeof body.look !== 'object') {
+        res.writeHead(400, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ error: 'email and look required' }))
+        return
+      }
+      await saveAppearance(email, body.look as import('../src/types').CharacterLook)
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: true }))
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: String(err) }))
+    }
+    return
+  }
+
+  res.writeHead(404)
+  res.end('Not found')
+})
+
+const wss = new WebSocketServer({ server, path: '/ws' })
+
+wss.on('connection', (ws) => {
+  const client: Client = { ws, id: null, email: null, peer: null }
+  clients.add(client)
+
+  ws.on('message', (raw) => {
+    let msg: ClientMsg
+    try {
+      msg = JSON.parse(String(raw)) as ClientMsg
+    } catch {
+      send(ws, { type: 'error', message: 'invalid json' })
+      return
+    }
+
+    if (msg.type === 'hello') {
+      client.id = msg.id
+      client.email = msg.email
+      send(ws, { type: 'welcome', peers: livePeers().filter((p) => p.id !== msg.id) })
+      return
+    }
+
+    if (msg.type === 'presence') {
+      if (client.id && msg.peer.id !== client.id) return
+      client.id = msg.peer.id
+      client.email = msg.peer.email
+      client.peer = { ...msg.peer, updatedAt: Date.now() }
+      broadcast({ type: 'presence', peer: client.peer }, ws)
+      return
+    }
+
+    if (msg.type === 'leave') {
+      const id = msg.id || client.id
+      if (!id) return
+      client.peer = null
+      broadcast({ type: 'leave', id }, ws)
+      return
+    }
+
+    if (msg.type === 'signal') {
+      if (!client.id) return
+      for (const c of clients) {
+        if (c.id === msg.to && c.ws.readyState === c.ws.OPEN) {
+          send(c.ws, { type: 'signal', from: client.id, data: msg.data })
+          break
+        }
+      }
+      return
+    }
+
+    if (msg.type === 'chat') {
+      broadcast({ type: 'chat', message: msg.message })
+      return
+    }
+
+    if (msg.type === 'activity') {
+      broadcast({ type: 'activity', event: msg.event }, ws)
+      // also echo to sender so local UX stays consistent for poll-create etc. when needed
+      // clients already apply locally on publish — skip echo for activity from others only
+      return
+    }
+  })
+
+  ws.on('close', () => {
+    const id = client.id
+    clients.delete(client)
+    if (id) broadcast({ type: 'leave', id })
+  })
+})
+
+setInterval(() => {
+  const now = Date.now()
+  for (const c of clients) {
+    if (c.peer && now - c.peer.updatedAt > STALE_MS) {
+      const id = c.peer.id
+      c.peer = null
+      broadcast({ type: 'leave', id })
+    }
+  }
+}, 2000)
+
+await ensureDataDir()
+server.listen(PORT, '0.0.0.0', () => {
+  console.log(`[trueid-office] multiplayer server on http://0.0.0.0:${PORT}  ws://0.0.0.0:${PORT}/ws`)
+})
