@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Request Tailscale Funnel for local Vite (HTTP).
-# Success = public URL returns 2xx/3xx. Otherwise exit 1 (Jenkins build fails).
-# On macOS, Jenkins must trigger the GUI LaunchAgent — direct CLI does not persist.
+# Auto-installs the macOS LaunchAgent, triggers it, verifies public URL.
+# Success = public URL returns 2xx/3xx. Otherwise exit 1.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,12 +10,12 @@ BACKEND="${FUNNEL_BACKEND:-http://127.0.0.1:${PORT}}"
 FUNNEL_HOST="${FUNNEL_HOST:-agent3s-imac.tail91abbd.ts.net}"
 PUBLIC_URL="https://${FUNNEL_HOST}/"
 TRIGGER="${ROOT}/.funnel-request"
-AGENT_PLIST="${HOME}/Library/LaunchAgents/com.trueid.office.funnel.plist"
+LABEL="com.trueid.office.funnel"
+TS_APP="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 
 find_tailscale() {
-  local app="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-  if [[ -x "$app" ]]; then
-    echo "$app"
+  if [[ -x "$TS_APP" ]]; then
+    echo "$TS_APP"
     return
   fi
   if command -v tailscale >/dev/null 2>&1; then
@@ -38,16 +38,36 @@ public_ok() {
   [[ "$code" =~ ^[23][0-9][0-9]$ ]]
 }
 
+as_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+run_funnel_direct() {
+  local ts="$1"
+  echo "==> direct: ${ts} funnel --bg --https=443 ${BACKEND}"
+  "$ts" funnel --bg --https=443 "$BACKEND" || true
+}
+
+run_funnel_osascript() {
+  local ts="$1"
+  if ! command -v osascript >/dev/null 2>&1; then
+    return 1
+  fi
+  local line
+  line="$(as_escape "$ts") funnel --bg --https=443 $(as_escape "$BACKEND")"
+  echo "==> osascript GUI: ${line}"
+  osascript -e "do shell script \"${line}\"" || true
+}
+
 fail() {
   echo "" >&2
   echo "ERROR: public Funnel not reachable — deploy FAILED." >&2
   echo "URL: ${PUBLIC_URL}" >&2
+  echo "LaunchAgent log: ${ROOT}/.funnel-agent.log" >&2
+  echo "Bootstrap err:   ${ROOT}/.funnel-agent.bootstrap.err" >&2
   echo "" >&2
-  echo "On agent3 desktop Terminal (GUI session), run once:" >&2
-  echo "  cd ~/apps/trueid-office" >&2
-  echo "  bash scripts/install-funnel-agent.sh" >&2
-  echo "  npm run funnel:on" >&2
-  echo "Then confirm the URL opens without Tailscale VPN, and re-run Jenkins." >&2
+  echo "Mac must be logged in as $(id -un) at the desktop (GUI), Tailscale Connected," >&2
+  echo "ACL funnel enabled, and Vite on :${PORT}. Re-run Jenkins after that." >&2
   exit 1
 }
 
@@ -80,14 +100,22 @@ if [[ "$ready" -ne 1 ]]; then
   exit 1
 fi
 
-if [[ ! -f "$AGENT_PLIST" ]]; then
-  echo "ERROR: Funnel LaunchAgent not installed (${AGENT_PLIST})." >&2
-  echo "Direct \`tailscale funnel\` from Jenkins prints success but does NOT work (HTTP 000)." >&2
-  fail
-fi
+echo "==> auto-install LaunchAgent"
+chmod +x "${ROOT}/scripts/install-funnel-agent.sh" "${ROOT}/scripts/funnel-agent.sh"
+bash "${ROOT}/scripts/install-funnel-agent.sh"
 
-echo "==> triggering GUI LaunchAgent via ${TRIGGER}"
+uid="$(id -u)"
+echo "==> trigger WatchPaths + kickstart"
 date >"$TRIGGER"
+launchctl kickstart -k "gui/${uid}/${LABEL}" 2>/dev/null || true
+
+# Also run the agent script now (same user) in case WatchPaths is slow/missed
+bash "${ROOT}/scripts/funnel-agent.sh" || true
+
+if [[ -n "$TS" ]]; then
+  run_funnel_direct "$TS"
+  run_funnel_osascript "$TS" || true
+fi
 
 echo "==> waiting for public URL (must be 2xx/3xx)"
 ok=0
@@ -100,8 +128,6 @@ for _ in $(seq 1 45); do
 done
 
 if [[ "$ok" -ne 1 ]]; then
-  echo "ERROR: still HTTP 000 / non-2xx after LaunchAgent trigger." >&2
-  echo "Check log: ${ROOT}/.funnel-agent.log" >&2
   fail
 fi
 

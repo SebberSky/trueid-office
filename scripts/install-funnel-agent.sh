@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Install a per-user LaunchAgent that enables Funnel inside the Aqua GUI session.
-# Run ONCE in desktop Terminal on agent3:  bash scripts/install-funnel-agent.sh
+# Install/refresh per-user LaunchAgent that enables Funnel in the Aqua GUI session.
+# Idempotent — safe to call from Jenkins every deploy.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,7 +9,7 @@ PLIST="${HOME}/Library/LaunchAgents/${LABEL}.plist"
 TRIGGER="${ROOT}/.funnel-request"
 AGENT="${ROOT}/scripts/funnel-agent.sh"
 
-chmod +x "$AGENT" "${ROOT}/scripts/enable-funnel.sh"
+chmod +x "$AGENT" "${ROOT}/scripts/enable-funnel.sh" "${ROOT}/scripts/install-funnel-agent.sh"
 mkdir -p "${HOME}/Library/LaunchAgents"
 touch "$TRIGGER"
 
@@ -30,7 +30,7 @@ cat >"$PLIST" <<EOF
     <string>${TRIGGER}</string>
   </array>
   <key>RunAtLoad</key>
-  <false/>
+  <true/>
   <key>WorkingDirectory</key>
   <string>${ROOT}</string>
   <key>StandardOutPath</key>
@@ -49,11 +49,15 @@ cat >"$PLIST" <<EOF
 EOF
 
 uid="$(id -u)"
-launchctl bootout "gui/${uid}/${LABEL}" 2>/dev/null || true
-launchctl bootstrap "gui/${uid}" "$PLIST"
-launchctl enable "gui/${uid}/${LABEL}" 2>/dev/null || true
+domain="gui/${uid}"
 
-echo "Installed LaunchAgent: ${PLIST}"
-echo "Trigger file: ${TRIGGER}"
-echo "Test: touch \"${TRIGGER}\" && sleep 3 && tail -20 \"${ROOT}/.funnel-agent.log\""
-echo "Then open: https://agent3s-imac.tail91abbd.ts.net/"
+echo "==> installing LaunchAgent ${LABEL} for ${domain}"
+launchctl bootout "${domain}/${LABEL}" 2>/dev/null || true
+if ! launchctl bootstrap "$domain" "$PLIST" 2>"${ROOT}/.funnel-agent.bootstrap.err"; then
+  echo "WARNING: launchctl bootstrap failed (is ${USER} logged into the Mac GUI?)" >&2
+  cat "${ROOT}/.funnel-agent.bootstrap.err" >&2 || true
+else
+  launchctl enable "${domain}/${LABEL}" 2>/dev/null || true
+  launchctl kickstart -k "${domain}/${LABEL}" 2>/dev/null || true
+  echo "Installed + kickstarted: ${PLIST}"
+fi
