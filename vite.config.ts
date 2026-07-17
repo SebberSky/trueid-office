@@ -49,10 +49,11 @@ export default defineConfig({
     },
   },
   server: {
-    // Bind IPv4 explicitly — IPv6-only listen can break HTTPS on LAN IPs (TLS EOF).
-    host: '0.0.0.0',
-    // Allow Tailscale / LAN hostnames when opening via IP or MagicDNS.
-    allowedHosts: true,
+    host: true, 
+    allowedHosts: [
+      'agent3s-imac-1.tail91abbd.ts.net',
+      'agent3s-imac.tail91abbd.ts.net'
+    ],
     proxy: {
       '/ws': {
         target: 'ws://localhost:3001',
