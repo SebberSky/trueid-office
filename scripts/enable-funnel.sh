@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Request Tailscale Funnel for local Vite (HTTP).
-# From Jenkins: touch a trigger for the GUI LaunchAgent (required on macOS).
-# Direct CLI from Jenkins usually prints "Funnel started" but does NOT persist.
+# Auto-installs the macOS LaunchAgent, triggers it, verifies public URL.
+# Success = public URL returns 2xx/3xx. Otherwise exit 1.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -10,13 +10,12 @@ BACKEND="${FUNNEL_BACKEND:-http://127.0.0.1:${PORT}}"
 FUNNEL_HOST="${FUNNEL_HOST:-agent3s-imac.tail91abbd.ts.net}"
 PUBLIC_URL="https://${FUNNEL_HOST}/"
 TRIGGER="${ROOT}/.funnel-request"
-# Deploy should not fail solely because Funnel isn't up yet (set FUNNEL_REQUIRED=1 to enforce).
-FUNNEL_REQUIRED="${FUNNEL_REQUIRED:-0}"
+LABEL="com.trueid.office.funnel"
+TS_APP="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
 
 find_tailscale() {
-  local app="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-  if [[ -x "$app" ]]; then
-    echo "$app"
+  if [[ -x "$TS_APP" ]]; then
+    echo "$TS_APP"
     return
   fi
   if command -v tailscale >/dev/null 2>&1; then
@@ -27,7 +26,6 @@ find_tailscale() {
 }
 
 http_code() {
-  # Avoid "000000" when curl fails after writing 000 — don't append another 000 via ||.
   local code
   code="$(curl -ksS -o /dev/null -w '%{http_code}' --connect-timeout 5 --max-time 12 "$PUBLIC_URL" 2>/dev/null)" || code="000"
   printf '%s' "$code"
@@ -38,6 +36,39 @@ public_ok() {
   code="$(http_code)"
   echo "==> GET ${PUBLIC_URL} → HTTP ${code}"
   [[ "$code" =~ ^[23][0-9][0-9]$ ]]
+}
+
+as_escape() {
+  printf '%s' "$1" | sed -e 's/\\/\\\\/g' -e 's/"/\\"/g'
+}
+
+run_funnel_direct() {
+  local ts="$1"
+  echo "==> direct: ${ts} funnel --bg --https=443 ${BACKEND}"
+  "$ts" funnel --bg --https=443 "$BACKEND" || true
+}
+
+run_funnel_osascript() {
+  local ts="$1"
+  if ! command -v osascript >/dev/null 2>&1; then
+    return 1
+  fi
+  local line
+  line="$(as_escape "$ts") funnel --bg --https=443 $(as_escape "$BACKEND")"
+  echo "==> osascript GUI: ${line}"
+  osascript -e "do shell script \"${line}\"" || true
+}
+
+fail() {
+  echo "" >&2
+  echo "ERROR: public Funnel not reachable — deploy FAILED." >&2
+  echo "URL: ${PUBLIC_URL}" >&2
+  echo "LaunchAgent log: ${ROOT}/.funnel-agent.log" >&2
+  echo "Bootstrap err:   ${ROOT}/.funnel-agent.bootstrap.err" >&2
+  echo "" >&2
+  echo "Mac must be logged in as $(id -un) at the desktop (GUI), Tailscale Connected," >&2
+  echo "ACL funnel enabled, and Vite on :${PORT}. Re-run Jenkins after that." >&2
+  exit 1
 }
 
 if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
@@ -65,24 +96,28 @@ for _ in $(seq 1 90); do
   sleep 1
 done
 if [[ "$ready" -ne 1 ]]; then
-  echo "port ${PORT} not up — Funnel not enabled" >&2
+  echo "ERROR: port ${PORT} not up (Vite/pm2)." >&2
   exit 1
 fi
 
-# Prefer GUI LaunchAgent (persists Serve config on macOS). Fall back to direct CLI.
-if [[ -f "${HOME}/Library/LaunchAgents/com.trueid.office.funnel.plist" ]]; then
-  echo "==> triggering GUI LaunchAgent via ${TRIGGER}"
-  # Update mtime even if file exists — WatchPaths fires on content/mtime change.
-  date >"$TRIGGER"
-else
-  echo "==> LaunchAgent not installed — trying direct CLI (often ineffective from Jenkins)"
-  echo "    One-time fix in desktop Terminal: bash scripts/install-funnel-agent.sh"
-  if [[ -n "$TS" ]]; then
-    "$TS" funnel --bg --https=443 "$BACKEND" || true
-  fi
+echo "==> auto-install LaunchAgent"
+chmod +x "${ROOT}/scripts/install-funnel-agent.sh" "${ROOT}/scripts/funnel-agent.sh"
+bash "${ROOT}/scripts/install-funnel-agent.sh"
+
+uid="$(id -u)"
+echo "==> trigger WatchPaths + kickstart"
+date >"$TRIGGER"
+launchctl kickstart -k "gui/${uid}/${LABEL}" 2>/dev/null || true
+
+# Also run the agent script now (same user) in case WatchPaths is slow/missed
+bash "${ROOT}/scripts/funnel-agent.sh" || true
+
+if [[ -n "$TS" ]]; then
+  run_funnel_direct "$TS"
+  run_funnel_osascript "$TS" || true
 fi
 
-echo "==> waiting for public URL"
+echo "==> waiting for public URL (must be 2xx/3xx)"
 ok=0
 for _ in $(seq 1 45); do
   if public_ok; then
@@ -92,18 +127,9 @@ for _ in $(seq 1 45); do
   sleep 2
 done
 
-if [[ "$ok" -eq 1 ]]; then
-  echo "==> public (no VPN): ${PUBLIC_URL}"
-  exit 0
+if [[ "$ok" -ne 1 ]]; then
+  fail
 fi
 
-echo "" >&2
-echo "WARNING: Funnel URL not reachable yet: ${PUBLIC_URL}" >&2
-echo "On agent3 desktop Terminal (once):" >&2
-echo "  cd ~/apps/trueid-office && bash scripts/install-funnel-agent.sh && npm run funnel:on" >&2
-echo "pm2/app restart still succeeded; guests need Funnel enabled in the GUI session." >&2
-
-if [[ "$FUNNEL_REQUIRED" == "1" ]]; then
-  exit 1
-fi
+echo "==> public OK (no VPN): ${PUBLIC_URL}"
 exit 0
