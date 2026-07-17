@@ -188,6 +188,12 @@
   color: #fecaca;
 }
 
+.world__controls button.on.lock {
+  background: rgba(234, 179, 8, 0.22);
+  border-color: #eab308;
+  color: #fde68a;
+}
+
 .world__controls button.on.rec {
   background: rgba(220, 38, 38, 0.3);
   border-color: #ef4444;

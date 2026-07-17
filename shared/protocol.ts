@@ -11,15 +11,17 @@ export type ClientMsg =
   | { type: 'signal'; to: string; data: SignalData }
   | { type: 'chat'; message: ChatMessage }
   | { type: 'activity'; event: ActivityEvent }
+  | { type: 'room-lock'; roomId: string; locked: boolean }
 
 /** Server → Client */
 export type ServerMsg =
-  | { type: 'welcome'; peers: PeerPresence[] }
+  | { type: 'welcome'; peers: PeerPresence[]; lockedRooms: string[] }
   | { type: 'presence'; peer: PeerPresence }
   | { type: 'leave'; id: string }
   | { type: 'signal'; from: string; data: SignalData }
   | { type: 'chat'; message: ChatMessage }
   | { type: 'activity'; event: ActivityEvent }
+  | { type: 'room-lock'; roomId: string; locked: boolean; byId: string; byName: string }
   | { type: 'error'; message: string }
 
 export type { SignalData, CharacterLook, PeerPresence, ChatMessage, ActivityEvent }

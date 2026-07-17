@@ -55,11 +55,14 @@ export function WorldView() {
   const globalChatRef = useRef<GlobalChatBus | null>(null)
   const activityRef = useRef<RoomActivityBus | null>(null)
   const sceneRef = useRef<CampusScene | null>(null)
+  const netRef = useRef<OfficeSocket | null>(null)
   const roomIdRef = useRef<string | null>(null)
+  const lockedRoomsRef = useRef(new Set<string>())
 
   const [roomName, setRoomName] = useState<string | null>(null)
   const [roomId, setRoomId] = useState<string | null>(null)
   const [capacity, setCapacity] = useState({ in: 0, max: 0 })
+  const [lockedRooms, setLockedRooms] = useState<Set<string>>(() => new Set())
   const [voiceOn, setVoiceOn] = useState(false)
   const [sharing, setSharing] = useState(false)
   const [recording, setRecording] = useState(false)
@@ -81,6 +84,18 @@ export function WorldView() {
   useEffect(() => {
     roomIdRef.current = roomId
   }, [roomId])
+
+  useEffect(() => {
+    lockedRoomsRef.current = lockedRooms
+    sceneRef.current?.setRoomLocks(lockedRooms)
+  }, [lockedRooms])
+
+  const applyLocks = useCallback((ids: string[]) => {
+    const next = new Set(ids)
+    lockedRoomsRef.current = next
+    setLockedRooms(next)
+    sceneRef.current?.setRoomLocks(next)
+  }, [])
 
   const pushRoomSys = useCallback((fromName: string, text: string, room: string) => {
     setRoomMsgs((prev) => [
@@ -124,6 +139,7 @@ export function WorldView() {
 
   useEffect(() => {
     const net = new OfficeSocket(session.id)
+    netRef.current = net
     const bus = new PresenceBus(net, session.id, {
       email: session.email,
       look: session.look,
@@ -132,6 +148,30 @@ export function WorldView() {
     const unsub = bus.subscribe(() => {
       peersRef.current = bus.getPeers()
       setPeerCount(peersRef.current.length)
+    })
+
+    const unsubLock = net.subscribe((msg) => {
+      if (msg.type === 'welcome') {
+        applyLocks(msg.lockedRooms ?? [])
+        return
+      }
+      if (msg.type !== 'room-lock') return
+      setLockedRooms((prev) => {
+        const next = new Set(prev)
+        if (msg.locked) next.add(msg.roomId)
+        else next.delete(msg.roomId)
+        lockedRoomsRef.current = next
+        sceneRef.current?.setRoomLocks(next)
+        return next
+      })
+      const currentRoom = roomIdRef.current
+      if (currentRoom && msg.roomId === currentRoom && msg.byId !== 'system') {
+        pushRoomSys(
+          msg.byName,
+          msg.locked ? '🔒 ล็อกห้องแล้ว' : '🔓 ปลดล็อกห้องแล้ว',
+          currentRoom,
+        )
+      }
     })
 
     const globalChat = new GlobalChatBus(net, session.id)
@@ -219,6 +259,7 @@ export function WorldView() {
       resumeAudioRef.current = null
       onLeave()
       unsub()
+      unsubLock()
       unsubChat()
       unsubAct()
       void media.destroy()
@@ -226,8 +267,9 @@ export function WorldView() {
       activity.destroy()
       bus.destroy()
       net.destroy()
+      netRef.current = null
     }
-  }, [session.id, pushRoomSys])
+  }, [session.id, session.email, session.look, applyLocks, pushRoomSys])
 
   useEffect(() => {
     // Use e.code so WASD still works under Thai IME (ไ/ฟ/ห/ก on those keys)
@@ -304,6 +346,7 @@ export function WorldView() {
 
     const scene = new CampusScene(canvas, map, session.look)
     sceneRef.current = scene
+    scene.setRoomLocks(lockedRoomsRef.current)
 
     let raf = 0
     let last = performance.now()
@@ -349,6 +392,7 @@ export function WorldView() {
       const prevRoom = roomAt(map, pos.current.x, pos.current.y)
       const nextRoom = roomAt(map, nx, ny)
       if (nextRoom && (!prevRoom || prevRoom.id !== nextRoom.id)) {
+        if (lockedRoomsRef.current.has(nextRoom.id)) return
         if (!isUnlimited(nextRoom)) {
           const others = peersRef.current.filter((p) => p.roomId === nextRoom.id).length
           if (others + 1 > nextRoom.capacity) return
@@ -589,6 +633,17 @@ export function WorldView() {
     }
   }
 
+  function toggleRoomLock() {
+    if (!roomId) return
+    const room = map.rooms.find((r) => r.id === roomId)
+    if (!room || room.kind === 'plaza') return
+    const locked = lockedRooms.has(roomId)
+    netRef.current?.send({ type: 'room-lock', roomId, locked: !locked })
+  }
+
+  const canLockRoom = !!roomId && map.rooms.find((r) => r.id === roomId)?.kind === 'room'
+  const roomIsLocked = !!(roomId && lockedRooms.has(roomId))
+
   return (
     <div className="world">
       <header className="world__bar">
@@ -600,6 +655,7 @@ export function WorldView() {
           <span>ออนไลน์ {peerCount + 1}</span>
           {roomName ? (
             <span className="world__room">
+              {roomIsLocked ? '🔒 ' : ''}
               {roomName}
               {capacity.max > 0 ? ` · ${capacity.in}/${capacity.max}` : ` · ${capacity.in} คน · ไม่จำกัด`}
             </span>
@@ -683,6 +739,20 @@ export function WorldView() {
               >
                 {sharing ? 'หยุดแชร์จอ' : 'แชร์จอ'}
               </button>
+              {canLockRoom && (
+                <button
+                  type="button"
+                  className={roomIsLocked ? 'on lock' : ''}
+                  onClick={toggleRoomLock}
+                  title={
+                    roomIsLocked
+                      ? 'ปลดล็อก — คนนอกจะเข้าห้องได้อีกครั้ง'
+                      : 'ล็อกห้อง — คนนอกเข้าไม่ได้ / ไม่ได้ยินเสียงหรือแชร์จอ'
+                  }
+                >
+                  {roomIsLocked ? '🔓 ปลดล็อกห้อง' : '🔒 ล็อกห้อง'}
+                </button>
+              )}
               {(screenFrom || sharing) && (
                 <>
                   <button

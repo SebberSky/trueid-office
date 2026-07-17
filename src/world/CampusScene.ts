@@ -35,6 +35,8 @@ export class CampusScene {
   private peerMotion = new Map<string, PeerMotion>()
   private waterMeshes: THREE.Mesh[] = []
   private roofs = new Map<string, THREE.Group>()
+  /** Padlock sprites at room doors — visible when room is locked. */
+  private doorLocks = new Map<string, THREE.Group>()
   private clock = 0
   /** South-side skyscrapers — faded when player is near the bottom map edge. */
   private citySouth = new THREE.Group()
@@ -592,6 +594,31 @@ export class CampusScene {
       plate.position.set(rx + 0.5 - thick / 2 - 0.045, 1.72, door.doorY2 + 1.5)
     }
     ground.add(plate)
+
+    // Padlock over the doorway (hidden until locked)
+    const lock = makeDoorPadlock()
+    if (room.door === 's') {
+      lock.position.set(door.doorX + 1, 1.35, door.doorY + 0.7)
+    } else if (room.door === 'n') {
+      lock.position.set(door.doorX + 1, 1.35, door.doorY - 0.7)
+    } else if (room.door === 'e') {
+      lock.rotation.y = Math.PI / 2
+      lock.position.set(door.doorX + 0.7, 1.35, door.doorY + 1)
+    } else {
+      lock.rotation.y = Math.PI / 2
+      lock.position.set(door.doorX - 0.7, 1.35, door.doorY + 1)
+    }
+    lock.visible = false
+    ground.add(lock)
+    this.doorLocks.set(room.id, lock)
+  }
+
+  /** Show / hide door padlocks for locked room ids. */
+  setRoomLocks(lockedIds: Iterable<string>) {
+    const set = lockedIds instanceof Set ? lockedIds : new Set(lockedIds)
+    for (const [id, group] of this.doorLocks) {
+      group.visible = set.has(id)
+    }
   }
 
   setSize(w: number, h: number) {
@@ -968,6 +995,53 @@ function framePost(x: number, z: number, h: number, mat: THREE.Material) {
   post.position.set(x, h / 2, z)
   post.castShadow = true
   return post
+}
+
+/** Billboard padlock blocking the doorway when the room is locked. */
+function makeDoorPadlock() {
+  const group = new THREE.Group()
+
+  // Semi-transparent door slab
+  const slab = new THREE.Mesh(
+    new THREE.BoxGeometry(1.9, 2.1, 0.12),
+    new THREE.MeshStandardMaterial({
+      color: 0x1e293b,
+      transparent: true,
+      opacity: 0.72,
+      roughness: 0.6,
+      metalness: 0.15,
+    }),
+  )
+  slab.position.y = 1.05
+  group.add(slab)
+
+  const canvas = document.createElement('canvas')
+  canvas.width = 256
+  canvas.height = 256
+  const ctx = canvas.getContext('2d')!
+  ctx.clearRect(0, 0, 256, 256)
+  ctx.fillStyle = 'rgba(15, 23, 42, 0.55)'
+  ctx.fillRect(28, 28, 200, 200)
+  ctx.font = '140px serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText('🔒', 128, 138)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  const icon = new THREE.Mesh(
+    new THREE.PlaneGeometry(1.15, 1.15),
+    new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false }),
+  )
+  icon.position.set(0, 1.2, 0.08)
+  group.add(icon)
+
+  // Face camera-ish from both sides
+  const iconBack = icon.clone()
+  iconBack.rotation.y = Math.PI
+  iconBack.position.z = -0.08
+  group.add(iconBack)
+
+  return group
 }
 
 /** Solid wall-mounted name plate (box mesh + canvas texture). */
