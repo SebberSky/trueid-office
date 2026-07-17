@@ -9,6 +9,7 @@
     "dev:web": "vite",
     "dev:server": "tsx server/index.ts",
     "funnel:on": "bash scripts/enable-funnel.sh",
+    "funnel:install-agent": "bash scripts/install-funnel-agent.sh",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
