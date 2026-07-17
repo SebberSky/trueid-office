@@ -11,11 +11,16 @@ FUNNEL_HOST="${FUNNEL_HOST:-agent3s-imac.tail91abbd.ts.net}"
 PUBLIC_URL="https://${FUNNEL_HOST}/"
 TRIGGER="${ROOT}/.funnel-request"
 LABEL="com.trueid.office.funnel"
-TS_APP="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+TS_APP="/usr/local/bin/tailscale"
 
 find_tailscale() {
   if [[ -x "$TS_APP" ]]; then
     echo "$TS_APP"
+    return
+  fi
+  local app="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
+  if [[ -x "$app" ]]; then
+    echo "$app"
     return
   fi
   if command -v tailscale >/dev/null 2>&1; then
@@ -44,8 +49,8 @@ as_escape() {
 
 run_funnel_direct() {
   local ts="$1"
-  echo "==> direct: ${ts} funnel --bg --https=443 ${BACKEND}"
-  "$ts" funnel --bg --https=443 "$BACKEND" || true
+  echo "==> direct: ${ts} funnel --bg ${PORT}"
+  "$ts" funnel --bg "$PORT" || true
 }
 
 run_funnel_osascript() {
@@ -54,7 +59,7 @@ run_funnel_osascript() {
     return 1
   fi
   local line
-  line="$(as_escape "$ts") funnel --bg --https=443 $(as_escape "$BACKEND")"
+  line="$(as_escape "$ts") funnel --bg $(as_escape "$PORT")"
   echo "==> osascript GUI: ${line}"
   osascript -e "do shell script \"${line}\"" || true
 }
