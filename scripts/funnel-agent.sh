@@ -8,13 +8,9 @@ LOG="${ROOT}/.funnel-agent.log"
 PORT="${PORT:-5173}"
 
 find_ts() {
+  # App removed on purpose — system CLI only.
   if [[ -x /usr/local/bin/tailscale ]]; then
     echo /usr/local/bin/tailscale
-    return
-  fi
-  local app="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-  if [[ -x "$app" ]]; then
-    echo "$app"
     return
   fi
   command -v tailscale
@@ -24,7 +20,7 @@ find_ts() {
   echo "---- $(date -Iseconds 2>/dev/null || date) ----"
   echo "user=$(id -un) port=${PORT}"
   if ! TS="$(find_ts)"; then
-    echo "tailscale CLI not found"
+    echo "tailscale CLI not found at /usr/local/bin/tailscale"
     exit 1
   fi
   echo "ts=${TS}"

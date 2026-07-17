@@ -14,13 +14,9 @@ LABEL="com.trueid.office.funnel"
 TS_APP="/usr/local/bin/tailscale"
 
 find_tailscale() {
+  # App removed on purpose — use system CLI only (/usr/local/bin/tailscale).
   if [[ -x "$TS_APP" ]]; then
     echo "$TS_APP"
-    return
-  fi
-  local app="/Applications/Tailscale.app/Contents/MacOS/Tailscale"
-  if [[ -x "$app" ]]; then
-    echo "$app"
     return
   fi
   if command -v tailscale >/dev/null 2>&1; then
