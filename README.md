@@ -13,17 +13,63 @@ Virtual workspace สำหรับอีเมลองค์กร `@truedigi
   - **Global** — ทั้งออฟฟิศ (BroadcastChannel)
   - **Room WebRTC** — เฉพาะคนในห้องเดียวกัน (RTCDataChannel)
 
-## Run
+## Run (โฮสต์ = agent3)
+
+รันบนเครื่อง **`agent3s-imac`** (`100.67.207.114`) เท่านั้น:
 
 ```bash
 npm install
 npm run dev
 ```
 
-Dev server ใช้ **HTTPS** (self-signed) เพื่อให้เบราว์เซอร์ขอสิทธิ์ไมค์ / แชร์จอได้เมื่อเปิดผ่าน IP ใน LAN  
-ครั้งแรกให้กด **Advanced → Proceed** (หรือ Allow) ที่คำเตือนใบรับรอง แล้วใช้ลิงก์ `https://…` ที่ Vite แสดง — อย่าใช้ `http://`
+### ให้คนอื่นเข้า
 
-เปิดสองแท็บด้วยอีเมลคนละอันเพื่อทดสอบเจอเพื่อนในแมพ คุยในห้อง และแชท
+| ใคร | URL |
+|-----|-----|
+| คนอื่นใน Tailscale | **`https://100.67.207.114:5173/`** |
+| คนที่นั่งที่เครื่องโฮสต์ | `https://localhost:5173/` |
+
+```bash
+npm run share-info
+```
+
+1. โฮสต์รัน `npm run dev` ค้างไว้ (ต้องเป็นโค้ดที่มี HTTPS / `@vitejs/plugin-basic-ssl`)
+2. ส่งให้เพื่อนเฉพาะ **`https://100.67.207.114:5173/`** — อย่าส่ง IP เครื่องตัวเอง
+3. ครั้งแรกกด **Advanced → Proceed**
+4. ตอนนี้ถ้าเปิดแล้วเจอแค่ `http://…` แปลว่าโฮสต์ยังรัน build/preview แบบ HTTP เก่า → ให้อัปเดตโค้ดแล้วรัน `npm run dev` ใหม่
+
+**หมายเหตุ:** บนเครื่องโฮสต์เองใช้ `localhost` อย่าเปิด IP ตัวเอง (macOS + HTTPS กับ LAN/Tailscale IP ของตัวเองมักพัง)
+
+เปิดสองเครื่องด้วยอีเมลคนละอันเพื่อทดสอบ
+
+## Jenkins (webhook → รีสตาร์ทโฮสต์)
+
+Webhook ไม่ควรรัน `npm run dev` ตรงๆ ใน job (จบ job แล้ว process ตาย)  
+ให้ Jenkins สั่ง **pm2 restart** บน agent3 แทน
+
+### ครั้งแรกบน agent3 (Jenkins agent)
+
+```bash
+npm i -g pm2
+pm2 startup   # ทำตามที่ pm2 บอก เพื่อให้ขึ้นหลังรีบูต
+```
+
+ใส่ label เครื่องนี้ใน Jenkins ว่า `agent3` (ให้ตรงกับ `Jenkinsfile`)
+
+### Job
+
+1. New Item → Pipeline  
+2. Pipeline from SCM → repo นี้ → Script Path: `Jenkinsfile`  
+3. (ออปชัน) ปลั๊กอิน **Generic Webhook Trigger** — สร้าง webhook URL แล้วยิงเข้าไปเมื่ออยากรีสตาร์ท  
+   หรือผูก GitHub/Bitbucket hook ตอนมี push
+
+Job จะทำ: `checkout` → `npm ci` → `pm2 start|restart trueid-office` แล้วจบ — แอปยังรันต่อใต้ pm2
+
+รีสตาร์ทมือบนโฮสต์:
+
+```bash
+bash scripts/jenkins-restart.sh
+```
 
 ## Controls
 
