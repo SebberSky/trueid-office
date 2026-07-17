@@ -5,14 +5,17 @@
   "type": "module",
   "scripts": {
     "dev": "concurrently -k -n web,api -c cyan,magenta \"vite\" \"tsx server/index.ts\"",
+    "dev:funnel": "VITE_DEV_HTTPS=0 concurrently -k -n web,api -c cyan,magenta \"vite\" \"tsx server/index.ts\"",
     "dev:web": "vite",
     "dev:server": "tsx server/index.ts",
+    "funnel:on": "bash scripts/enable-funnel.sh",
     "build": "tsc -b && vite build",
     "lint": "oxlint",
     "preview": "vite preview --host 0.0.0.0 --port 5173",
     "start": "tsx server/index.ts",
     "start:all": "npm run build && concurrently -k -n web,api \"npm run preview\" \"npm run start\"",
-    "share-info": "node scripts/share-info.mjs"
+    "share-info": "node scripts/share-info.mjs",
+    "restart:host": "bash scripts/jenkins-restart.sh"
   },
   "dependencies": {
     "nanoid": "^6.0.0",

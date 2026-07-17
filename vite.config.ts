@@ -1,5 +1,5 @@
 import os from 'node:os'
-import { defineConfig } from 'vite'
+import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
 
@@ -15,16 +15,23 @@ function lanHosts(): string[] {
   return [...hosts]
 }
 
-// HTTPS is required so getUserMedia / getDisplayMedia work when opening via LAN IP
-// (http://192.168.x.x is not a secure context — the browser never shows the permission prompt).
-export default defineConfig({
-  plugins: [
-    react(),
+// Default: HTTPS (basicSsl) so getUserMedia works on LAN IPs.
+// Funnel: VITE_DEV_HTTPS=0 → plain HTTP for Tailscale Funnel to terminate TLS
+// with a publicly trusted cert (https://*.ts.net).
+const useDevHttps = process.env.VITE_DEV_HTTPS !== '0'
+
+const plugins: PluginOption[] = [react()]
+if (useDevHttps) {
+  plugins.push(
     basicSsl({
       name: 'trueid-office',
       domains: lanHosts(),
     }),
-  ],
+  )
+}
+
+export default defineConfig({
+  plugins,
   build: {
     // Suppress size warning for the unavoidable three.js vendor chunk (~531 kB).
     // App entry stays small via manualChunks + lazy WorldView.
