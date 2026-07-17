@@ -46,3 +46,9 @@ Thumbs.db
 # SSL (vite basic-ssl / local certs)
 *.pem
 *.key
+
+# Tailscale Funnel agent trigger/logs (local host only)
+.funnel-request
+.funnel-agent.log
+.funnel-agent.out
+.funnel-agent.err
