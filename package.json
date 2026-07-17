@@ -4,8 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n web,api -c cyan,magenta \"vite\" \"tsx server/index.ts\"",
-    "dev:funnel": "VITE_DEV_HTTPS=0 concurrently -k -n web,api -c cyan,magenta \"vite\" \"tsx server/index.ts\"",
+    "dev": "concurrently -k -n web,api -c cyan,magenta \"vite --host\" \"tsx server/index.ts\"",
+    "dev:funnel": "VITE_DEV_HTTPS=0 concurrently -k -n web,api -c cyan,magenta \"vite --host\" \"tsx server/index.ts\"",
     "dev:web": "vite",
     "dev:server": "tsx server/index.ts",
     "funnel:on": "bash scripts/enable-funnel.sh",
