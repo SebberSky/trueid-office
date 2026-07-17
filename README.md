@@ -28,26 +28,20 @@ Virtual workspace สำหรับอีเมลองค์กร `@truedigi
 npm run share-info
 ```
 
-Webhook จะ: `npm ci` → `pm2 restart` (`dev:funnel`) → เปิด Tailscale Funnel ให้อัตโนมัติ
+Webhook จะ: `npm ci` → `pm2 restart` (`dev`)  
+**Tailscale Funnel** คอนฟิกค้างบนโฮสต์แล้ว — deploy ไม่ต้องเปิด Funnel ใหม่
 
 ## Jenkins (webhook → รีสตาร์ทโฮสต์)
 
 Webhook ไม่ควรรัน `npm run dev` ตรงๆ ใน job (จบ job แล้ว process ตาย)  
-ให้ Jenkins สั่ง **pm2 restart + Funnel** บน agent3 แทน
+ให้ Jenkins สั่ง **pm2 restart** บน agent3 แทน (รีสตาร์ทแอปอย่างเดียว)
 
 ### ครั้งแรกบน agent3 (Jenkins agent)
 
 `pm2` อยู่ใน `devDependencies` แล้ว — Jenkins ใช้ `npx pm2` หลัง `npm ci` ไม่ต้องติด global  
 (ออปชัน) ครั้งแรกบนเครื่องโฮสต์ถ้าอยากให้ขึ้นหลังรีบูต: `npx pm2 startup` แล้วทำตามที่มันบอก
 
-ACL Tailscale ต้องมี `nodeAttrs` → `"attr": ["funnel"]` แล้ว
-
-### Funnel บน macOS (agent3)
-
-ทุก deploy จะ **ติดตั้ง LaunchAgent เอง** แล้ว trigger ให้เปิด Funnel  
-URL ต้องตอบ 2xx/3xx ไม่งั้น **build แดง**
-
-เงื่อนไข: user `agent3` ต้องล็อกอินหน้าจอ Mac อยู่, Tailscale Connected, ACL มี `funnel`
+Funnel / Tailscale ตั้งครั้งเดียวบนโฮสต์ (เช่น `tailscale funnel --bg 5173`) แล้วทิ้งไว้ — ไม่ผูกในสคริปต์ deploy
 
 ### Job
 
@@ -56,7 +50,7 @@ URL ต้องตอบ 2xx/3xx ไม่งั้น **build แดง**
 3. (ออปชัน) ปลั๊กอิน **Generic Webhook Trigger** — สร้าง webhook URL แล้วยิงเข้าไปเมื่ออยากรีสตาร์ท  
    หรือผูก GitHub/Bitbucket hook ตอนมี push
 
-Job จะทำ: `checkout` → `npm ci` → `pm2 start|restart trueid-office` → `scripts/enable-funnel.sh` แล้วจบ
+Job จะทำ: `checkout` → `npm ci` → `pm2 start|restart trueid-office` แล้วจบ
 
 รีสตาร์ทมือบนโฮสต์ (ชุดเดียวกับ webhook):
 
