@@ -1,29 +1,29 @@
 #!/usr/bin/env bash
 # Restart TrueID Office under pm2 (called from Jenkins — job can exit; app keeps running).
 # Also (re)enables Tailscale Funnel so guests use https://*.ts.net/ without VPN.
+# Uses npx pm2 (same as Freestyle shell) — no global pm2 required.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-if ! command -v pm2 >/dev/null 2>&1; then
-  echo "pm2 not found — install on the Jenkins agent: npm i -g pm2" >&2
-  exit 1
-fi
-
 echo "==> npm ci"
 npm ci
 
-if pm2 describe trueid-office >/dev/null 2>&1; then
+PM2=(npx --no-install pm2)
+
+if "${PM2[@]}" describe trueid-office >/dev/null 2>&1; then
   echo "==> pm2 restart trueid-office"
-  pm2 restart trueid-office --update-env
+  "${PM2[@]}" restart trueid-office --update-env
 else
   echo "==> pm2 start ecosystem.config.cjs"
-  pm2 start ecosystem.config.cjs
+  # Drop legacy process names from the old Freestyle script if present
+  "${PM2[@]}" delete trueid-api trueid-web 2>/dev/null || true
+  "${PM2[@]}" start ecosystem.config.cjs
 fi
 
-pm2 save
-pm2 status trueid-office
+"${PM2[@]}" save
+"${PM2[@]}" status trueid-office
 
 echo "==> enable Tailscale Funnel"
 chmod +x scripts/enable-funnel.sh
