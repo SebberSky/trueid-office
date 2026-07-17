@@ -54,7 +54,7 @@ npm run funnel:on
 ```
 
 จากนั้นทุก Jenkins deploy จะ `touch .funnel-request` ให้ Agent เปิด Funnel ใน GUI session  
-URL: `https://agent3s-imac.tail91abbd.ts.net/`
+URL ต้องตอบ 2xx/3xx ไม่งั้น **build แดง** — ไม่นับว่า deploy สำเร็จถ้าเข้าจาก public ไม่ได้
 
 ### Job
 
