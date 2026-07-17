@@ -7,6 +7,18 @@ const ICE: RTCConfiguration = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
 }
 
+/** Mic / screen share need a secure context (HTTPS or localhost). */
+export function assertMediaAvailable() {
+  if (!window.isSecureContext) {
+    throw new Error(
+      'INSECURE_CONTEXT: เปิดไมค์/แชร์จอได้เฉพาะ HTTPS หรือ localhost — ใช้ลิงก์ https:// จาก `npm run dev` แล้วกด Advanced → Proceed',
+    )
+  }
+  if (!navigator.mediaDevices?.getUserMedia) {
+    throw new Error('MEDIA_UNAVAILABLE: เบราว์เซอร์นี้ไม่รองรับไมโครโฟน')
+  }
+}
+
 type RoomChatWire = { type: 'room-chat'; message: ChatMessage }
 
 /**
@@ -104,6 +116,7 @@ export class RoomMedia {
   async setVoice(on: boolean) {
     if (on) {
       if (!this.localStream) {
+        assertMediaAvailable()
         this.localStream = await navigator.mediaDevices.getUserMedia({
           audio: true,
           video: false,
@@ -128,6 +141,7 @@ export class RoomMedia {
   }
 
   async startScreenShare() {
+    assertMediaAvailable()
     this.screenStream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
       audio: true,

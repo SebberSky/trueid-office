@@ -3,7 +3,7 @@ import { nanoid } from 'nanoid'
 import { useAppStore } from '../store'
 import { TILE, canTraverse, generateWorld, isUnlimited, pixelCenter, roomAt } from '../world/terrain'
 import { CampusScene } from '../world/CampusScene'
-import { HEARTBEAT_MS, PresenceBus, makePresence } from '../presence/bus'
+import { HEARTBEAT_MS, MOVE_SEND_MS, PresenceBus, makePresence } from '../presence/bus'
 import { OfficeSocket } from '../net/OfficeSocket'
 import { RoomMedia } from '../media/RoomMedia'
 import { downloadRecording, ScreenRecorder } from '../media/ScreenRecorder'
@@ -19,6 +19,16 @@ import { MobileControls } from './MobileControls'
 import './World.css'
 
 const SPEED = 280
+
+function mediaErrMessage(err: unknown, fallback: string): string {
+  const msg = err instanceof Error ? err.message : ''
+  if (msg.startsWith('INSECURE_CONTEXT:')) return msg.slice('INSECURE_CONTEXT:'.length).trim()
+  if (msg.startsWith('MEDIA_UNAVAILABLE:')) return msg.slice('MEDIA_UNAVAILABLE:'.length).trim()
+  if (err instanceof DOMException && err.name === 'NotAllowedError') {
+    return 'ปฏิเสธสิทธิ์ไมค์/แชร์จอ — เปิดใหม่ที่ไอคอนกุญแจข้าง URL'
+  }
+  return fallback
+}
 
 export function WorldView() {
   const session = useAppStore((s) => s.session)!
@@ -100,6 +110,9 @@ export function WorldView() {
       ),
     )
   }, [map, session, voiceOn, sharing])
+
+  const publishRef = useRef(publish)
+  publishRef.current = publish
 
   useEffect(() => {
     const net = new OfficeSocket(session.id)
@@ -250,6 +263,10 @@ export function WorldView() {
     let last = performance.now()
     let lastUi = { roomName: null as string | null, roomId: null as string | null, in: 0, max: 0 }
     let lastPeerKey = ''
+    let lastNetSend = 0
+    let lastNetX = pos.current.x
+    let lastNetY = pos.current.y
+    let lastNetFacing = facing.current
 
     const resize = () => {
       scene.setSize(wrap.clientWidth, wrap.clientHeight)
@@ -324,6 +341,17 @@ export function WorldView() {
         tryMove(pos.current.x + dx * step, pos.current.y)
         tryMove(pos.current.x, pos.current.y + dy * step)
         moving = true
+      }
+
+      const movedNet =
+        Math.hypot(pos.current.x - lastNetX, pos.current.y - lastNetY) > 0.5 ||
+        facing.current !== lastNetFacing
+      if (movedNet && now - lastNetSend >= MOVE_SEND_MS) {
+        publishRef.current()
+        lastNetSend = now
+        lastNetX = pos.current.x
+        lastNetY = pos.current.y
+        lastNetFacing = facing.current
       }
 
       const room = roomAt(map, pos.current.x, pos.current.y)
@@ -470,8 +498,8 @@ export function WorldView() {
       if (recorderRef.current?.recording) {
         recorderRef.current.setAudioSources(mediaRef.current?.collectAudioStreams() ?? [])
       }
-    } catch {
-      setMediaError('ไม่สามารถเปิดไมโครโฟนได้')
+    } catch (err) {
+      setMediaError(mediaErrMessage(err, 'ไม่สามารถเปิดไมโครโฟนได้'))
     }
   }
 
@@ -487,8 +515,8 @@ export function WorldView() {
         await mediaRef.current?.startScreenShare()
         setSharing(true)
       }
-    } catch {
-      setMediaError('ยกเลิกหรือไม่สามารถแชร์จอได้')
+    } catch (err) {
+      setMediaError(mediaErrMessage(err, 'ยกเลิกหรือไม่สามารถแชร์จอได้'))
     }
   }
 

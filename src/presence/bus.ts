@@ -2,7 +2,10 @@ import type { Facing, PeerPresence, CharacterLook } from '../types'
 import type { OfficeSocket } from '../net/OfficeSocket'
 import type { ServerMsg } from '../../shared/protocol'
 
-const HEARTBEAT_MS = 800
+/** Idle keep-alive so peers do not expire while standing still. */
+const HEARTBEAT_MS = 1000
+/** While walking, push position often enough that remote lerp stays smooth. */
+const MOVE_SEND_MS = 50
 const STALE_MS = 2500
 
 export type SignalData =
@@ -117,4 +120,4 @@ export function makePresence(
   }
 }
 
-export { HEARTBEAT_MS }
+export { HEARTBEAT_MS, MOVE_SEND_MS }

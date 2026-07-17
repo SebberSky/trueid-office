@@ -11,6 +11,18 @@ const ZOOM_DEFAULT = 0.42
 const ZOOM_MIN = 0.28
 const ROOM_WALL_H = 2.55
 const ROOM_ROOF_Y = 2.68
+/** Slightly faster than local walk (280) so remotes catch up after network delay. */
+const PEER_CATCHUP = 340
+/** Snap instead of sliding when the gap is clearly a teleport / first join. */
+const PEER_SNAP_DIST = 200
+
+type PeerMotion = {
+  x: number
+  y: number
+  tx: number
+  ty: number
+  facing: Facing
+}
 
 export class CampusScene {
   readonly renderer: THREE.WebGLRenderer
@@ -19,7 +31,7 @@ export class CampusScene {
   private player: Character3D
   private playerIsBird = false
   private peers = new Map<string, Character3D>()
-  private peerLastPos = new Map<string, { x: number; y: number }>()
+  private peerMotion = new Map<string, PeerMotion>()
   private waterMeshes: THREE.Mesh[] = []
   private roofs = new Map<string, THREE.Group>()
   private clock = 0
@@ -601,27 +613,48 @@ export class CampusScene {
     for (const p of peers) {
       seen.add(p.id)
       let avatar = this.peers.get(p.id)
-      if (!avatar) {
+      let motion = this.peerMotion.get(p.id)
+      if (!avatar || !motion) {
         avatar = new Character3D(p.look)
         this.peers.set(p.id, avatar)
         this.scene.add(avatar.root)
+        motion = { x: p.x, y: p.y, tx: p.x, ty: p.y, facing: p.facing }
+        this.peerMotion.set(p.id, motion)
       }
-      const { x, z } = toWorldXZ(p.x, p.y)
-      const y = surfaceY(map, p.x, p.y)
-      const prev = this.peerLastPos.get(p.id)
-      const moving = prev ? Math.hypot(p.x - prev.x, p.y - prev.y) > 0.8 : false
-      this.peerLastPos.set(p.id, { x: p.x, y: p.y })
+
+      motion.tx = p.x
+      motion.ty = p.y
+      motion.facing = p.facing
+
+      const dx = motion.tx - motion.x
+      const dy = motion.ty - motion.y
+      const dist = Math.hypot(dx, dy)
+      if (dist > PEER_SNAP_DIST) {
+        motion.x = motion.tx
+        motion.y = motion.ty
+      } else if (dist > 0.4) {
+        const step = Math.min(dist, PEER_CATCHUP * dt)
+        motion.x += (dx / dist) * step
+        motion.y += (dy / dist) * step
+      } else {
+        motion.x = motion.tx
+        motion.y = motion.ty
+      }
+
+      const moving = dist > 1.2
+      const { x, z } = toWorldXZ(motion.x, motion.y)
+      const y = surfaceY(map, motion.x, motion.y)
       const isBird =
         p.look.species === 'animal' && normalizeAnimalKind(p.look.animalKind) === 'bird'
-      const overWater = isBird && isWaterAt(map, p.x, p.y)
-      avatar.setPose(x, z, y, p.facing, moving, dt, overWater)
+      const overWater = isBird && isWaterAt(map, motion.x, motion.y)
+      avatar.setPose(x, z, y, motion.facing, moving, dt, overWater)
     }
     for (const [id, avatar] of this.peers) {
       if (!seen.has(id)) {
         this.scene.remove(avatar.root)
         avatar.dispose()
         this.peers.delete(id)
-        this.peerLastPos.delete(id)
+        this.peerMotion.delete(id)
       }
     }
   }

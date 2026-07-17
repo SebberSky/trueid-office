@@ -42,3 +42,12 @@ input:focus-visible {
   outline: 2px solid var(--true-red);
   outline-offset: 2px;
 }
+
+.app-loading {
+  display: grid;
+  place-items: center;
+  min-height: 100vh;
+  font-family: var(--font-display);
+  font-weight: 700;
+  color: var(--ink-soft);
+}
