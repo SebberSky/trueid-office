@@ -4,7 +4,8 @@ module.exports = {
       name: 'trueid-office',
       cwd: __dirname,
       script: 'npm',
-      args: 'run dev',
+      // HTTP Vite — Tailscale Funnel on the host already terminates public HTTPS.
+      args: 'run dev:funnel',
       interpreter: 'none',
       instances: 1,
       autorestart: true,
@@ -13,6 +14,7 @@ module.exports = {
       min_uptime: '5s',
       env: {
         NODE_ENV: 'development',
+        VITE_DEV_HTTPS: '0',
       },
     },
   ],

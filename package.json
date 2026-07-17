@@ -4,7 +4,8 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
-    "dev": "concurrently -k -n web,api -c cyan,magenta \"vite --host --allowed-hosts agent3s-imac-1.tail91abbd.ts.net\" \"tsx server/index.ts\"",
+    "dev": "concurrently -k -n web,api -c cyan,magenta \"vite --host\" \"tsx server/index.ts\"",
+    "dev:funnel": "VITE_DEV_HTTPS=0 concurrently -k -n web,api -c cyan,magenta \"vite --host\" \"tsx server/index.ts\"",
     "dev:web": "vite",
     "dev:server": "tsx server/index.ts",
     "build": "tsc -b && vite build",
