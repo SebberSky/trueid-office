@@ -13,6 +13,7 @@ import type { ChatMessage, PinnedMessage } from '../chat/types'
 import type { Facing } from '../types'
 import { canFlyOverWater, normalizeAnimalKind } from '../types'
 import { ChatPanel } from './ChatPanel'
+import { NameWheel } from './NameWheel'
 import { PollPanel } from './PollPanel'
 import { FloatingEmojis, type FloatEmojiItem } from './FloatingEmojis'
 import { OnlineRoster, type RosterPerson } from './OnlineRoster'
@@ -125,6 +126,7 @@ export function WorldView() {
   const [raisedHands, setRaisedHands] = useState<{ id: string; name: string }[]>([])
   const [pollOpen, setPollOpen] = useState(false)
   const [activePoll, setActivePoll] = useState<Poll | null>(null)
+  const [wheelOpen, setWheelOpen] = useState(false)
   const [floatEmojis, setFloatEmojis] = useState<FloatEmojiItem[]>([])
   const [screenFs, setScreenFs] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -177,6 +179,7 @@ export function WorldView() {
 
   const jumpAtRef = useRef(0)
   const fireAtRef = useRef(0)
+  const crouchingRef = useRef(false)
 
   const publish = useCallback(() => {
     const bus = busRef.current
@@ -195,6 +198,7 @@ export function WorldView() {
         sharing,
         jumpAtRef.current || undefined,
         fireAtRef.current || undefined,
+        crouchingRef.current || undefined,
       ),
     )
   }, [map, session, voiceOn, sharing])
@@ -458,9 +462,16 @@ export function WorldView() {
       }
       if (e.code === 'Space') {
         e.preventDefault()
-        if (!e.repeat) {
+        if (!e.repeat && !crouchingRef.current) {
           sceneRef.current?.jump()
           jumpAtRef.current = Date.now()
+          publishRef.current()
+        }
+      }
+      if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
+        e.preventDefault()
+        if (!crouchingRef.current) {
+          crouchingRef.current = true
           publishRef.current()
         }
       }
@@ -496,6 +507,13 @@ export function WorldView() {
     }
     const onUp = (e: KeyboardEvent) => {
       keys.current.delete(e.code)
+      if (e.code === 'ControlLeft' || e.code === 'ControlRight') {
+        // Stay crouched if the other Ctrl is still held
+        if (!e.getModifierState('Control') && crouchingRef.current) {
+          crouchingRef.current = false
+          publishRef.current()
+        }
+      }
     }
     window.addEventListener('keydown', onDown)
     window.addEventListener('keyup', onUp)
@@ -652,6 +670,10 @@ export function WorldView() {
       if (!worldActiveRef.current) {
         keys.current.clear()
         stickRef.current = { x: 0, y: 0 }
+        if (crouchingRef.current) {
+          crouchingRef.current = false
+          publishRef.current()
+        }
         maintainMedia(now)
         raf = requestAnimationFrame(tick)
         return
@@ -672,6 +694,7 @@ export function WorldView() {
         dy += stick.y
       }
 
+      const crouching = crouchingRef.current
       let moving = false
       if (dx !== 0 || dy !== 0) {
         const len = Math.hypot(dx, dy) || 1
@@ -679,7 +702,7 @@ export function WorldView() {
         dy /= len
         if (Math.abs(dx) > Math.abs(dy)) facing.current = dx < 0 ? 'left' : 'right'
         else facing.current = dy < 0 ? 'up' : 'down'
-        const step = SPEED * dt
+        const step = SPEED * (crouching ? 0.45 : 1) * dt
         tryMove(pos.current.x + dx * step, pos.current.y)
         tryMove(pos.current.x, pos.current.y + dy * step)
         moving = true
@@ -707,7 +730,7 @@ export function WorldView() {
 
       const { peers } = maintainMedia(now)
       scene.syncPeers(peers, map, dt)
-      scene.render(map, pos.current.x, pos.current.y, facing.current, moving, dt)
+      scene.render(map, pos.current.x, pos.current.y, facing.current, moving, dt, crouching)
       raf = requestAnimationFrame(tick)
     }
 
@@ -735,6 +758,7 @@ export function WorldView() {
     setRaisedHands([])
     setActivePoll(null)
     setPollOpen(false)
+    setWheelOpen(false)
     setFloatEmojis([])
     setScreenFs(false)
     void stopRecordingIfNeeded()
@@ -975,6 +999,12 @@ export function WorldView() {
       ]
     : []
 
+  const canUseNameWheel = roomPeople.length > 3
+
+  useEffect(() => {
+    if (!canUseNameWheel && wheelOpen) setWheelOpen(false)
+  }, [canUseNameWheel, wheelOpen])
+
   return (
     <div className="world">
       <header className="world__bar">
@@ -1141,8 +1171,8 @@ export function WorldView() {
           </div>
         )}
         <div className="world__hint world__hint--desktop">
-          WASD / ลูกศร เดิน · Space กระโดด · F ตกปลา · M ไมค์ · มังกรกด E พ่นไฟ · โซนชมพู = Fall Guys ·
-          ลูกกลมเมาส์ / +− ซูม
+          WASD / ลูกศร เดิน · Ctrl หมอบ · Space กระโดด · F ตกปลา · M ไมค์ · มังกรกด E พ่นไฟ ·
+          โซนชมพู = Fall Guys · ลูกกลมเมาส์ / +− ซูม
         </div>
         <MobileControls
           stickRef={stickRef}
@@ -1186,6 +1216,19 @@ export function WorldView() {
                   {roomIsLocked ? '🔓 ปลดล็อกห้อง' : '🔒 ล็อกห้อง'}
                 </button>
               )}
+              <button
+                type="button"
+                className={wheelOpen ? 'on' : ''}
+                disabled={!canUseNameWheel}
+                title={
+                  canUseNameWheel
+                    ? 'วงล้อสุ่มชื่อสมาชิกในห้อง'
+                    : 'ใช้ได้เมื่อมีสมาชิกในห้องมากกว่า 3 คน'
+                }
+                onClick={() => setWheelOpen((v) => !v)}
+              >
+                🎡 สุ่มชื่อ
+              </button>
               {(screenFrom || sharing) && (
                 <>
                   <button
@@ -1306,6 +1349,12 @@ export function WorldView() {
                   activityRef.current?.votePoll(roomId, activePoll.id, optionIndex)
                 }}
               />
+              {wheelOpen && (
+                <NameWheel
+                  members={roomPeople.map((p) => ({ id: p.id, name: p.name }))}
+                  onClose={() => setWheelOpen(false)}
+                />
+              )}
             </>
           )}
         </div>

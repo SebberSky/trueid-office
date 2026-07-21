@@ -107,6 +107,7 @@ export function makePresence(
   sharing: boolean,
   jumpAt?: number,
   fireAt?: number,
+  crouching?: boolean,
 ): PeerPresence {
   return {
     id,
@@ -120,6 +121,7 @@ export function makePresence(
     sharing,
     jumpAt,
     fireAt,
+    crouching,
     updatedAt: Date.now(),
   }
 }

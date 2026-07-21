@@ -199,10 +199,9 @@
   transition: background 0.15s, border-color 0.15s;
 }
 
-.world__controls button.on {
-  background: rgba(26, 155, 142, 0.25);
-  border-color: #1a9b8e;
-  color: #99f6e4;
+.world__controls button:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
 }
 
 .world__controls button.on.share {

@@ -1,0 +1,125 @@
+.nwheel {
+  border: 1px solid rgba(244, 114, 182, 0.4);
+  background: rgba(15, 23, 42, 0.9);
+  border-radius: 12px;
+  padding: 0.65rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+}
+
+.nwheel__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-family: var(--font-display);
+  font-size: 0.85rem;
+  color: #f9a8d4;
+}
+
+.nwheel__close {
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 1.2rem;
+  cursor: pointer;
+  line-height: 1;
+}
+
+.nwheel__stage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 0.35rem 0 0.15rem;
+}
+
+.nwheel__pointer {
+  position: absolute;
+  top: 0;
+  left: 50%;
+  z-index: 2;
+  width: 0;
+  height: 0;
+  transform: translateX(-50%);
+  border-left: 10px solid transparent;
+  border-right: 10px solid transparent;
+  border-top: 18px solid #f8fafc;
+  filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.45));
+}
+
+.nwheel__canvas {
+  display: block;
+  border-radius: 50%;
+  box-shadow:
+    0 0 0 4px rgba(248, 250, 252, 0.12),
+    0 12px 28px rgba(0, 0, 0, 0.35);
+}
+
+.nwheel__opt {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  font-size: 0.75rem;
+  color: #cbd5e1;
+  cursor: pointer;
+  user-select: none;
+}
+
+.nwheel__opt input {
+  margin-top: 0.1rem;
+  accent-color: #f472b6;
+}
+
+.nwheel__meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-size: 0.7rem;
+  color: #94a3b8;
+}
+
+.nwheel__reset {
+  border: 1px solid rgba(255, 255, 255, 0.15);
+  background: rgba(255, 255, 255, 0.06);
+  color: #e2e8f0;
+  border-radius: 6px;
+  padding: 0.2rem 0.45rem;
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.nwheel__winner {
+  margin: 0;
+  text-align: center;
+  font-size: 0.85rem;
+  color: #fce7f3;
+  background: rgba(244, 114, 182, 0.15);
+  border: 1px solid rgba(244, 114, 182, 0.35);
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+}
+
+.nwheel__winner strong {
+  color: #fda4af;
+  font-size: 1rem;
+}
+
+.nwheel__spin {
+  border: none;
+  border-radius: 10px;
+  padding: 0.65rem;
+  font: inherit;
+  font-weight: 800;
+  font-size: 0.9rem;
+  background: linear-gradient(90deg, #f472b6, #a78bfa, #38bdf8);
+  color: #0f172a;
+  cursor: pointer;
+}
+
+.nwheel__spin:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
