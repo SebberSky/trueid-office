@@ -147,6 +147,7 @@ export function WorldView() {
   const [xoPhase, setXoPhase] = useState<'idle' | 'playing' | 'results'>('idle')
   const [xoWinnerId, setXoWinnerId] = useState<string | null>(null)
   const [xoReason, setXoReason] = useState<'win' | 'draw' | 'forfeit' | null>(null)
+  const [lobbyError, setLobbyError] = useState<string | null>(null)
   const xoRoleRef = useRef(xoRole)
   xoRoleRef.current = xoRole
   const xoDismissedGameRef = useRef(0)
@@ -187,6 +188,10 @@ export function WorldView() {
   // Entering a room collapses global chat; leaving expands it again.
   useEffect(() => {
     setGlobalChatExpanded(!roomId)
+  }, [roomId])
+
+  useEffect(() => {
+    setLobbyError(null)
   }, [roomId])
 
   // Enter pink pad during a live race → spectator overlay (unless already a racer)
@@ -375,6 +380,7 @@ export function WorldView() {
       }
       if (msg.type === 'error') {
         setMediaError(msg.message)
+        setLobbyError(msg.message)
         return
       }
       if (msg.type === 'welcome') {
@@ -406,6 +412,7 @@ export function WorldView() {
         return
       }
       if (msg.type === 'fallguys-race-start') {
+        setLobbyError(null)
         applyFgRaceStartRef.current(msg.race)
         return
       }
@@ -427,6 +434,7 @@ export function WorldView() {
         return
       }
       if (msg.type === 'xo-game-start') {
+        setLobbyError(null)
         applyXoGameStartRef.current(msg.game)
         return
       }
@@ -1198,6 +1206,14 @@ export function WorldView() {
   const xoZoneCount =
     peersLive.filter((p) => p.roomId === XO_ROOM_ID).length +
     (roomId === XO_ROOM_ID ? 1 : 0)
+  const xoZoneIds = [
+    ...(roomId === XO_ROOM_ID ? [session.id] : []),
+    ...peersLive.filter((p) => p.roomId === XO_ROOM_ID).map((p) => p.id),
+  ]
+  const fgZoneIds = [
+    ...(roomId === FALLGUYS_ROOM_ID ? [session.id] : []),
+    ...peersLive.filter((p) => p.roomId === FALLGUYS_ROOM_ID).map((p) => p.id),
+  ]
 
   useEffect(() => {
     if (!canUseNameWheel && wheelOpen) setWheelOpen(false)
@@ -1291,10 +1307,18 @@ export function WorldView() {
           <div className="world__fg-lobby">
             <strong>Fall Guys Arena</strong>
             <p>ในโซน {fgZoneCount} คน</p>
+            {lobbyError && <p className="world__lobby-err">{lobbyError}</p>}
             <button
               type="button"
               disabled={fgZoneCount < 1}
-              onClick={() => netRef.current?.send({ type: 'fallguys-start' })}
+              onClick={() => {
+                setLobbyError(null)
+                publishRef.current()
+                const zoneIds = [...new Set(fgZoneIds)]
+                window.setTimeout(() => {
+                  netRef.current?.send({ type: 'fallguys-start', zoneIds })
+                }, 80)
+              }}
             >
               {fgZoneCount < 1 ? 'รอผู้เล่น…' : 'เริ่มเกม'}
             </button>
@@ -1310,10 +1334,18 @@ export function WorldView() {
           <div className="world__fg-lobby">
             <strong>{XO_ROOM_NAME}</strong>
             <p>ในโซน {xoZoneCount}/2 คน</p>
+            {lobbyError && <p className="world__lobby-err">{lobbyError}</p>}
             <button
               type="button"
               disabled={xoZoneCount !== 2}
-              onClick={() => netRef.current?.send({ type: 'xo-start' })}
+              onClick={() => {
+                setLobbyError(null)
+                publishRef.current()
+                const zoneIds = [...new Set(xoZoneIds)].slice(0, 2)
+                window.setTimeout(() => {
+                  netRef.current?.send({ type: 'xo-start', zoneIds })
+                }, 80)
+              }}
             >
               {xoZoneCount !== 2 ? 'รอผู้เล่น 2 คน' : 'เริ่มเกม'}
             </button>
@@ -1332,14 +1364,17 @@ export function WorldView() {
             onMove={(cell) =>
               netRef.current?.send({ type: 'xo-move', gameId: xoGameId, cell })
             }
-            onRestart={() => netRef.current?.send({ type: 'xo-restart' })}
+            onRestart={() =>
+              netRef.current?.send({
+                type: 'xo-restart',
+                zoneIds: [...new Set(xoZoneIds)].slice(0, 2),
+              })
+            }
             onQuit={() => {
               netRef.current?.send({ type: 'xo-quit' })
               xoDismissedGameRef.current = xoGameId
               setXoRole('none')
-              if (xoPhase === 'results') {
-                setXoPhase('idle')
-              }
+              setXoPhase('idle')
             }}
           />
         )}
@@ -1361,7 +1396,12 @@ export function WorldView() {
                 finished,
               })
             }}
-            onRestart={() => netRef.current?.send({ type: 'fallguys-restart' })}
+            onRestart={() =>
+              netRef.current?.send({
+                type: 'fallguys-restart',
+                zoneIds: [...new Set(fgZoneIds)],
+              })
+            }
             onQuit={() => {
               netRef.current?.send({ type: 'fallguys-quit' })
               fgDismissedRaceRef.current = fgRaceIdRef.current

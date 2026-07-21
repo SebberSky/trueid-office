@@ -446,6 +446,10 @@ setInterval(() => {
   const now = Date.now()
   for (const c of clients) {
     if (c.peer && now - c.peer.updatedAt > STALE_MS) {
+      // Keep room membership while the socket is still open (tab throttle can
+      // delay heartbeats). Only drop peers for dead sockets — livePeers() already
+      // hides stale entries from the online roster.
+      if (c.ws.readyState === 1) continue
       const id = c.peer.id
       maybeSavePose(c, true)
       c.peer = null

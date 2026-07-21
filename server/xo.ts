@@ -49,6 +49,18 @@ function inBooth(deps: Deps): Client[] {
   )
 }
 
+/** Align server booth with who the starter's client currently sees in the pad. */
+function ensureInBooth(deps: Deps, ids: string[]) {
+  for (const id of ids) {
+    const c = [...deps.clients].find((x) => x.id === id && x.ws.readyState === 1)
+    if (!c?.peer) continue
+    if (c.peer.roomId !== XO_ROOM_ID) {
+      c.peer = { ...c.peer, roomId: XO_ROOM_ID, updatedAt: Date.now() }
+    }
+    if (!boothJoinedAt.has(id)) boothJoinedAt.set(id, Date.now())
+  }
+}
+
 function recomputeHost(deps: Deps) {
   const zone = inBooth(deps)
   if (zone.length === 0) {
@@ -116,20 +128,22 @@ function endGame(deps: Deps, winner: string | null, reason: 'win' | 'draw' | 'fo
   publishLobby(deps)
 }
 
+function sendXoError(deps: Deps, requesterId: string, message: string) {
+  const c = [...deps.clients].find((x) => x.id === requesterId)
+  if (c) deps.send(c.ws, { type: 'error', message })
+}
+
 function startGame(deps: Deps, requesterId: string) {
-  if (phase === 'playing') return
   const zone = inBooth(deps)
   if (zone.length !== 2) {
-    const c = [...deps.clients].find((x) => x.id === requesterId)
-    if (c) deps.send(c.ws, { type: 'error', message: 'XO needs exactly 2 players' })
+    sendXoError(deps, requesterId, `XO ต้องมีผู้เล่นในโซน 2 คน (ตอนนี้ ${zone.length})`)
     return
   }
   if (!zone.some((c) => c.id === requesterId)) {
-    const c = [...deps.clients].find((x) => x.id === requesterId)
-    if (c) deps.send(c.ws, { type: 'error', message: 'must be in XO zone to start' })
+    sendXoError(deps, requesterId, 'ต้องยืนในโซน XO ถึงจะเริ่มได้')
     return
   }
-  // Either player in the full zone may start; earliest joiner still gets X.
+  // Either player in the full zone may start (also works as rematch while stuck in playing).
   recomputeHost(deps)
 
   // Host = X, other = O
@@ -190,21 +204,36 @@ export function handleXoMsg(
   deps: Deps,
   client: Client,
   msg:
-    | { type: 'xo-start' }
-    | { type: 'xo-restart' }
+    | { type: 'xo-start'; zoneIds?: string[] }
+    | { type: 'xo-restart'; zoneIds?: string[] }
     | { type: 'xo-quit' }
     | { type: 'xo-move'; gameId: number; cell: number },
 ) {
-  if (!client.id) return
+  if (!client.id) {
+    deps.send(client.ws, { type: 'error', message: 'ยังไม่พร้อม — รอเชื่อมต่อแล้วกดเริ่มอีกครั้ง' })
+    return
+  }
 
   if (msg.type === 'xo-start' || msg.type === 'xo-restart') {
-    if (msg.type === 'xo-restart' && phase !== 'results' && phase !== 'lobby') return
+    const claimed = Array.isArray(msg.zoneIds) ? msg.zoneIds.map(String) : []
+    const ids = [...new Set([client.id, ...claimed])].slice(0, 2)
+    ensureInBooth(deps, ids)
+    // Re-run presence hooks so boothJoinedAt matches forced roomIds.
+    for (const id of ids) {
+      const c = [...deps.clients].find((x) => x.id === id)
+      if (c) onXoPresence(deps, c)
+    }
     startGame(deps, client.id)
     return
   }
 
   if (msg.type === 'xo-quit') {
-    // Client closes local UI only.
+    // Closing the overlay mid-match counts as leaving the round.
+    forfeitIfNeeded(deps, client.id)
+    if (phase === 'results') {
+      phase = 'lobby'
+      publishLobby(deps)
+    }
     return
   }
 

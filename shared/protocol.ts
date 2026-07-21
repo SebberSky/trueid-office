@@ -35,12 +35,12 @@ export type ClientMsg =
       /** Pin this message, or null to unpin. */
       message: ChatMessage | null
     }
-  | { type: 'fallguys-start' }
-  | { type: 'fallguys-restart' }
+  | { type: 'fallguys-start'; zoneIds?: string[] }
+  | { type: 'fallguys-restart'; zoneIds?: string[] }
   | { type: 'fallguys-quit' }
   | { type: 'fallguys-progress'; raceId: number; progress: number; finished: boolean }
-  | { type: 'xo-start' }
-  | { type: 'xo-restart' }
+  | { type: 'xo-start'; zoneIds?: string[] }
+  | { type: 'xo-restart'; zoneIds?: string[] }
   | { type: 'xo-quit' }
   | { type: 'xo-move'; gameId: number; cell: number }
 
