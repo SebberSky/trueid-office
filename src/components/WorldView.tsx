@@ -13,6 +13,7 @@ import type { ChatMessage, PinnedMessage } from '../chat/types'
 import type { Facing } from '../types'
 import { canFlyOverWater, normalizeAnimalKind } from '../types'
 import { ChatPanel } from './ChatPanel'
+import { NameWheel } from './NameWheel'
 import { PollPanel } from './PollPanel'
 import { FloatingEmojis, type FloatEmojiItem } from './FloatingEmojis'
 import { OnlineRoster, type RosterPerson } from './OnlineRoster'
@@ -125,6 +126,7 @@ export function WorldView() {
   const [raisedHands, setRaisedHands] = useState<{ id: string; name: string }[]>([])
   const [pollOpen, setPollOpen] = useState(false)
   const [activePoll, setActivePoll] = useState<Poll | null>(null)
+  const [wheelOpen, setWheelOpen] = useState(false)
   const [floatEmojis, setFloatEmojis] = useState<FloatEmojiItem[]>([])
   const [screenFs, setScreenFs] = useState(false)
   const videoRef = useRef<HTMLVideoElement>(null)
@@ -735,6 +737,7 @@ export function WorldView() {
     setRaisedHands([])
     setActivePoll(null)
     setPollOpen(false)
+    setWheelOpen(false)
     setFloatEmojis([])
     setScreenFs(false)
     void stopRecordingIfNeeded()
@@ -975,6 +978,12 @@ export function WorldView() {
       ]
     : []
 
+  const canUseNameWheel = roomPeople.length > 3
+
+  useEffect(() => {
+    if (!canUseNameWheel && wheelOpen) setWheelOpen(false)
+  }, [canUseNameWheel, wheelOpen])
+
   return (
     <div className="world">
       <header className="world__bar">
@@ -1186,6 +1195,19 @@ export function WorldView() {
                   {roomIsLocked ? '🔓 ปลดล็อกห้อง' : '🔒 ล็อกห้อง'}
                 </button>
               )}
+              <button
+                type="button"
+                className={wheelOpen ? 'on' : ''}
+                disabled={!canUseNameWheel}
+                title={
+                  canUseNameWheel
+                    ? 'วงล้อสุ่มชื่อสมาชิกในห้อง'
+                    : 'ใช้ได้เมื่อมีสมาชิกในห้องมากกว่า 3 คน'
+                }
+                onClick={() => setWheelOpen((v) => !v)}
+              >
+                🎡 สุ่มชื่อ
+              </button>
               {(screenFrom || sharing) && (
                 <>
                   <button
@@ -1306,6 +1328,12 @@ export function WorldView() {
                   activityRef.current?.votePoll(roomId, activePoll.id, optionIndex)
                 }}
               />
+              {wheelOpen && (
+                <NameWheel
+                  members={roomPeople.map((p) => ({ id: p.id, name: p.name }))}
+                  onClose={() => setWheelOpen(false)}
+                />
+              )}
             </>
           )}
         </div>

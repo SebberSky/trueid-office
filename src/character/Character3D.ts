@@ -70,6 +70,13 @@ export class Character3D {
   private restY = 0
   private fireT = 0
   private fireGroup: THREE.Group | null = null
+  /** Charred look: hold black, then fade back to original colors. */
+  private burnHoldT = 0
+  private burnFadeT = 0
+  private burnFadeDur = 0.9
+  private burnParts: { mat: THREE.MeshLambertMaterial; orig: THREE.Color }[] = []
+  private static readonly BURN_HOLD = 5
+  private static readonly BURN_COLOR = new THREE.Color(0x0c0c0c)
 
   constructor(look: CharacterLook) {
     this.root.add(this.body)
@@ -478,18 +485,19 @@ export class Character3D {
     this.jumpVel = this.jumpSpeed
   }
 
-  /** Dragon-only fire breath cone in front of the mouth. */
+  /** Dragon-only fire breath cone from the snout / mouth. */
   triggerFireBreath() {
     if (this.animalKind !== 'dragon') return
     if (this.fireT > 0.05) return
     this.fireT = 0.85
     if (!this.fireGroup) {
       this.fireGroup = new THREE.Group()
-      this.body.add(this.fireGroup)
+      // Parent to head so flame leaves the muzzle, not the torso
+      this.headG.add(this.fireGroup)
       const colors = [0xff6b00, 0xffcc33, 0xff3300]
       for (let i = 0; i < 5; i++) {
         const ball = new THREE.Mesh(
-          new THREE.SphereGeometry(0.14 + i * 0.04, 8, 6),
+          new THREE.SphereGeometry(0.12 + i * 0.035, 8, 6),
           new THREE.MeshBasicMaterial({
             color: colors[i % colors.length],
             transparent: true,
@@ -497,11 +505,27 @@ export class Character3D {
             depthWrite: false,
           }),
         )
-        ball.position.set(0, 0.55, 0.55 + i * 0.28)
+        // Snout tip sits near z≈0.55, y≈-0.05 on the dragon head
+        ball.position.set(0, -0.06, 0.58 + i * 0.26)
         this.fireGroup.add(ball)
       }
     }
     this.fireGroup.visible = true
+  }
+
+  /** Char this avatar black for ~5s, then fade back to chosen colors. */
+  applyBurn(holdSec = Character3D.BURN_HOLD, fadeSec = 0.9) {
+    this.ensureBurnParts()
+    this.burnHoldT = holdSec
+    this.burnFadeT = 0
+    this.burnFadeDur = fadeSec
+    for (const p of this.burnParts) {
+      p.mat.color.copy(Character3D.BURN_COLOR)
+    }
+  }
+
+  isBreathingFire() {
+    return this.fireT > 0
   }
 
   airHeight() {
@@ -526,6 +550,7 @@ export class Character3D {
   ) {
     this.stepJump(dt)
     this.stepFire(dt)
+    this.stepBurn(dt)
     this.root.position.set(px, py + this.jumpY, pz)
     const yaw =
       facing === 'down' ? 0 : facing === 'up' ? Math.PI : facing === 'left' ? -Math.PI / 2 : Math.PI / 2
@@ -563,11 +588,43 @@ export class Character3D {
       const mat = m.material as THREE.MeshBasicMaterial
       mat.opacity = 0.25 + life * 0.7
       m.scale.setScalar(0.7 + (1 - life) * 0.8 + i * 0.05)
-      m.position.z = 0.55 + i * 0.28 + (1 - life) * 0.35
+      m.position.set(0, -0.06, 0.58 + i * 0.26 + (1 - life) * 0.4)
     })
     if (this.fireT <= 0) {
       this.fireGroup.visible = false
       this.fireT = 0
+    }
+  }
+
+  private ensureBurnParts() {
+    if (this.burnParts.length > 0) return
+    const seen = new Set<THREE.MeshLambertMaterial>()
+    this.body.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return
+      const m = obj.material
+      if (!(m instanceof THREE.MeshLambertMaterial) || seen.has(m)) return
+      seen.add(m)
+      this.burnParts.push({ mat: m, orig: m.color.clone() })
+    })
+  }
+
+  private stepBurn(dt: number) {
+    if (this.burnHoldT <= 0 && this.burnFadeT <= 0) return
+    if (this.burnHoldT > 0) {
+      this.burnHoldT -= dt
+      if (this.burnHoldT > 0) return
+      this.burnHoldT = 0
+      this.burnFadeT = this.burnFadeDur
+    }
+    if (this.burnFadeT <= 0) return
+    this.burnFadeT -= dt
+    const t = 1 - Math.max(0, this.burnFadeT) / this.burnFadeDur
+    for (const p of this.burnParts) {
+      p.mat.color.copy(Character3D.BURN_COLOR).lerp(p.orig, t)
+    }
+    if (this.burnFadeT <= 0) {
+      this.burnFadeT = 0
+      for (const p of this.burnParts) p.mat.color.copy(p.orig)
     }
   }
 

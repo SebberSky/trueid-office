@@ -51,6 +51,7 @@ export class CampusScene {
   /** Smooth zoom target & current in [0, 1]. */
   private zoomTarget = ZOOM_DEFAULT
   private zoom = ZOOM_DEFAULT
+  private lastLocalPos = { x: 0, y: 0, facing: 'down' as Facing }
   /** Smoothed camera look-at height (terrain-based — ignores bird flap / hover bob). */
   private camFocusY = 0
   private camFocusReady = false
@@ -710,9 +711,51 @@ export class CampusScene {
     this.player.triggerJump()
   }
 
-  /** Dragon fire breath (E). */
+  /** Dragon fire breath (E) — VFX + burn anyone in the forward cone. */
   breathFire() {
     this.player.triggerFireBreath()
+    this.applyFireCone(
+      this.player,
+      this.lastLocalPos.x,
+      this.lastLocalPos.y,
+      this.lastLocalPos.facing,
+    )
+  }
+
+  /** Char avatars standing in front of a dragon's breath. */
+  private applyFireCone(
+    attacker: Character3D,
+    ox: number,
+    oy: number,
+    facing: Facing,
+  ) {
+    const dir =
+      facing === 'down'
+        ? { x: 0, y: 1 }
+        : facing === 'up'
+          ? { x: 0, y: -1 }
+          : facing === 'left'
+            ? { x: -1, y: 0 }
+            : { x: 1, y: 0 }
+    const range = TILE * 3.2
+    const halfWidth = TILE * 1.15
+
+    const tryHit = (avatar: Character3D, x: number, y: number) => {
+      if (avatar === attacker) return
+      const dx = x - ox
+      const dy = y - oy
+      const along = dx * dir.x + dy * dir.y
+      if (along < TILE * 0.35 || along > range) return
+      const lat = Math.abs(dx * dir.y - dy * dir.x)
+      if (lat > halfWidth) return
+      avatar.applyBurn()
+    }
+
+    tryHit(this.player, this.lastLocalPos.x, this.lastLocalPos.y)
+    for (const [id, motion] of this.peerMotion) {
+      const avatar = this.peers.get(id)
+      if (avatar) tryHit(avatar, motion.x, motion.y)
+    }
   }
 
   setLocalMic(voiceOn: boolean) {
@@ -790,6 +833,7 @@ export class CampusScene {
       if (p.fireAt && p.fireAt !== motion.lastFireAt) {
         motion.lastFireAt = p.fireAt
         avatar.triggerFireBreath()
+        this.applyFireCone(avatar, motion.x, motion.y, motion.facing)
       }
 
       const dx = motion.tx - motion.x
@@ -833,6 +877,7 @@ export class CampusScene {
     dt: number,
   ) {
     this.clock += dt
+    this.lastLocalPos = { x: px, y: py, facing }
     for (const w of this.waterMeshes) {
       w.position.y = TERRAIN_HEIGHT.water + Math.sin(this.clock * 2 + w.position.x) * 0.03
     }
