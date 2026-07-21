@@ -221,32 +221,25 @@ export class CampusScene {
 
         if (type === 'water') {
           if (!this.waterMat) {
-            // Unlit — MeshStandard + sun was crushing ponds to navy; minimap stayed blue.
+            // Opaque + unlit + toneMapped:false — transparent Standard/Basic water
+            // was crushed to navy by ACES tone mapping (minimap stayed bright).
             this.waterMap = makeWaterTextures()
             this.waterMat = new THREE.MeshBasicMaterial({
               map: this.waterMap,
-              color: 0x6ed4ff,
-              transparent: true,
-              opacity: 0.94,
-              depthWrite: false,
+              color: 0x4fc3f0,
+              toneMapped: false,
             })
           }
 
-          // Bright bed under the sheet (still visible at edges / through opacity)
-          const bed = new THREE.Mesh(
-            new THREE.BoxGeometry(T, 0.28, T),
-            new THREE.MeshBasicMaterial({ color: 0x4eb8e8 }),
-          )
-          bed.position.set(tx + 0.5, -0.4, ty + 0.5)
-          ground.add(bed)
-
-          const mesh = new THREE.Mesh(new THREE.PlaneGeometry(T * 1.02, T * 1.02), this.waterMat)
-          mesh.rotation.x = -Math.PI / 2
-          mesh.position.set(tx + 0.5, h + 0.04, ty + 0.5)
+          // Voxel slab like other tiles — sits slightly below grass so ponds read as water
+          const mesh = new THREE.Mesh(new THREE.BoxGeometry(T * 0.98, 0.2, T * 0.98), this.waterMat)
+          mesh.position.set(tx + 0.5, -0.22, ty + 0.5)
           mesh.receiveShadow = false
+          mesh.castShadow = false
           const uvs = mesh.geometry.attributes.uv
+          // BoxGeometry has 6 faces; tint all UVs so ripples show on the top face clearly
           for (let i = 0; i < uvs.count; i++) {
-            uvs.setXY(i, uvs.getX(i) * 0.55 + tx * 0.37, uvs.getY(i) * 0.55 + ty * 0.41)
+            uvs.setXY(i, uvs.getX(i) * 0.7 + tx * 0.31, uvs.getY(i) * 0.7 + ty * 0.29)
           }
           uvs.needsUpdate = true
           ground.add(mesh)
@@ -259,16 +252,17 @@ export class CampusScene {
             tileAt(map, tx, ty + 1) !== 'water'
           if (shore) {
             const foam = new THREE.Mesh(
-              new THREE.PlaneGeometry(T * 0.92, T * 0.92),
+              new THREE.PlaneGeometry(T * 0.9, T * 0.9),
               new THREE.MeshBasicMaterial({
-                color: 0xeaf8ff,
+                color: 0xe8f7ff,
                 transparent: true,
-                opacity: 0.4,
+                opacity: 0.45,
                 depthWrite: false,
+                toneMapped: false,
               }),
             )
             foam.rotation.x = -Math.PI / 2
-            foam.position.set(tx + 0.5, h + 0.055, ty + 0.5)
+            foam.position.set(tx + 0.5, -0.1, ty + 0.5)
             ground.add(foam)
           }
 
@@ -277,7 +271,7 @@ export class CampusScene {
               new THREE.CylinderGeometry(0.16, 0.16, 0.04, 8),
               new THREE.MeshStandardMaterial({ color: 0x3d8f45, roughness: 0.85 }),
             )
-            pad.position.set(tx + 0.35 + (n % 3) * 0.12, h + 0.14, ty + 0.4)
+            pad.position.set(tx + 0.35 + (n % 3) * 0.12, -0.08, ty + 0.4)
             ground.add(pad)
           }
           continue
@@ -915,7 +909,7 @@ export class CampusScene {
     const hand = this.fishHand
     hand.set(root.x + nx * 0.42, root.y + 1.05, root.z + nz * 0.42)
 
-    const waterY = TERRAIN_HEIGHT.water + 0.06
+    const waterY = -0.1
     const cast = this.fishingCastT
     const ease = 1 - Math.pow(1 - cast, 2.4)
 
@@ -1073,7 +1067,7 @@ export class CampusScene {
       this.waterMap.offset.set(drift * 0.7, Math.sin(this.clock * 0.35) * 0.08 + drift * 0.4)
     }
     for (const w of this.waterMeshes) {
-      w.position.y = TERRAIN_HEIGHT.water + 0.02 + Math.sin(this.clock * 1.6 + w.position.x * 1.3 + w.position.z) * 0.018
+      w.position.y = -0.22 + Math.sin(this.clock * 1.6 + w.position.x * 1.3 + w.position.z) * 0.02
     }
 
     const { x, z } = toWorldXZ(px, py)
