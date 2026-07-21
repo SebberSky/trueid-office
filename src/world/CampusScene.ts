@@ -55,6 +55,14 @@ export class CampusScene {
   /** Smoothed camera look-at height (terrain-based — ignores bird flap / hover bob). */
   private camFocusY = 0
   private camFocusReady = false
+  /** Camera look-at offset from the player (tile units). Set via minimap drag. */
+  private camPanX = 0
+  private camPanZ = 0
+  private moveMarker: THREE.Mesh | null = null
+  private readonly pickRay = new THREE.Raycaster()
+  private readonly pickNdc = new THREE.Vector2()
+  private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
+  private readonly pickHit = new THREE.Vector3()
   private readonly headWorld = new THREE.Vector3()
   private readonly headNdc = new THREE.Vector3()
   private fishingGroup = new THREE.Group()
@@ -706,6 +714,83 @@ export class CampusScene {
     return this.zoomTarget
   }
 
+  getCameraPan() {
+    return { x: this.camPanX, z: this.camPanZ }
+  }
+
+  /** Pan the camera look-at away from the player (tile units). */
+  setCameraPan(panX: number, panZ: number, playerPx: number, playerPy: number) {
+    let focusTx = playerPx / TILE + panX
+    let focusTz = playerPy / TILE + panZ
+    const margin = 3
+    focusTx = Math.max(margin, Math.min(MAP_W - margin, focusTx))
+    focusTz = Math.max(margin, Math.min(MAP_H - margin, focusTz))
+    this.camPanX = focusTx - playerPx / TILE
+    this.camPanZ = focusTz - playerPy / TILE
+  }
+
+  /** Visible ground area on the minimap (tile units). */
+  getViewExtents(playerPx: number, playerPy: number) {
+    const blend = Math.min(1, Math.max(0, (this.zoom - ZOOM_MIN) / (1 - ZOOM_MIN)))
+    const halfW = 5.5 + (1 - blend) * 16
+    const aspect = this.camera.aspect > 0 ? this.camera.aspect : 16 / 9
+    const halfH = halfW / aspect
+    return {
+      focusTx: playerPx / TILE + this.camPanX,
+      focusTz: playerPy / TILE + this.camPanZ,
+      halfW,
+      halfH,
+      playerTx: playerPx / TILE,
+      playerTz: playerPy / TILE,
+    }
+  }
+
+  /** Raycast from screen coords to the ground plane (returns map pixel coords). */
+  pickGround(clientX: number, clientY: number, canvas: HTMLCanvasElement): { x: number; y: number } | null {
+    const rect = canvas.getBoundingClientRect()
+    if (rect.width <= 0 || rect.height <= 0) return null
+    this.pickNdc.set(
+      ((clientX - rect.left) / rect.width) * 2 - 1,
+      -((clientY - rect.top) / rect.height) * 2 + 1,
+    )
+    this.pickRay.setFromCamera(this.pickNdc, this.camera)
+    const hit = this.pickRay.ray.intersectPlane(this.groundPlane, this.pickHit)
+    if (!hit) return null
+    const px = hit.x * TILE
+    const py = hit.z * TILE
+    if (px < TILE * 0.5 || py < TILE * 0.5 || px > MAP_W * TILE - TILE * 0.5 || py > MAP_H * TILE - TILE * 0.5) {
+      return null
+    }
+    return { x: px, y: py }
+  }
+
+  setMoveMarker(px: number | null, py: number | null) {
+    if (!this.moveMarker) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.32, 0.48, 32),
+        new THREE.MeshBasicMaterial({
+          color: 0xfbbf24,
+          transparent: true,
+          opacity: 0.9,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      )
+      ring.rotation.x = -Math.PI / 2
+      ring.visible = false
+      ring.renderOrder = 10
+      this.moveMarker = ring
+      this.scene.add(ring)
+    }
+    if (px == null || py == null) {
+      this.moveMarker.visible = false
+      return
+    }
+    const { x, z } = toWorldXZ(px, py)
+    this.moveMarker.position.set(x, 0.16, z)
+    this.moveMarker.visible = true
+  }
+
   /** Visual hop for the local player (Space). */
   jump() {
     this.player.triggerJump()
@@ -975,12 +1060,14 @@ export class CampusScene {
       this.camFocusY += (desiredFocusY - this.camFocusY) * (1 - Math.exp(-10 * dt))
     }
     const focusY = this.camFocusY
+    const focusWx = x + this.camPanX
+    const focusWz = z + this.camPanZ
     this.camera.position.set(
-      x + (camDirX / camDirLen) * followDist,
+      focusWx + (camDirX / camDirLen) * followDist,
       focusY + followHeight,
-      z + (camDirZ / camDirLen) * followDist,
+      focusWz + (camDirZ / camDirLen) * followDist,
     )
-    this.camera.lookAt(x, focusY + 0.75 + blend * 0.35, z)
+    this.camera.lookAt(focusWx, focusY + 0.75 + blend * 0.35, focusWz)
 
     this.renderer.render(this.scene, this.camera)
   }

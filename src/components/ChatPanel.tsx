@@ -144,11 +144,18 @@ export function ChatPanel({
             className={tools.handRaised ? 'tool on' : 'tool'}
             onClick={tools.onToggleHand}
             title={tools.handRaised ? 'ลงมือ' : 'ยกมือ'}
+            aria-label={tools.handRaised ? 'ลงมือ' : 'ยกมือ'}
           >
-            ✋ {tools.handRaised ? 'ลงมือ' : 'ยกมือ'}
+            ✋
           </button>
-          <button type="button" className="tool" onClick={tools.onOpenPoll} title="Poll">
-            📊 Poll
+          <button
+            type="button"
+            className="tool"
+            onClick={tools.onOpenPoll}
+            title="Poll"
+            aria-label="Poll"
+          >
+            📊
           </button>
           <div className="chat__emoji-wrap">
             <button
@@ -156,6 +163,7 @@ export function ChatPanel({
               className={emojiOpen ? 'tool on' : 'tool'}
               onClick={() => setEmojiOpen((v) => !v)}
               title="Emoji"
+              aria-label="Emoji"
             >
               😊
             </button>
