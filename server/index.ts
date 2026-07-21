@@ -44,13 +44,13 @@ const pinnedByRoom = new Map<string, PinnedMessage>()
 const UNLOCKABLE = new Set(['plaza-main', 'fallguys-arena', 'xo-booth'])
 
 function send(ws: WebSocket, msg: ServerMsg) {
-  if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
+  if (ws.readyState === 1) ws.send(JSON.stringify(msg))
 }
 
 function broadcast(msg: ServerMsg, except?: WebSocket) {
   const raw = JSON.stringify(msg)
   for (const c of clients) {
-    if (c.ws !== except && c.ws.readyState === c.ws.OPEN) c.ws.send(raw)
+    if (c.ws !== except && c.ws.readyState === 1) c.ws.send(raw)
   }
 }
 
@@ -374,7 +374,7 @@ wss.on('connection', (ws) => {
     if (msg.type === 'signal') {
       if (!client.id) return
       for (const c of clients) {
-        if (c.id === msg.to && c.ws.readyState === c.ws.OPEN) {
+        if (c.id === msg.to && c.ws.readyState === 1) {
           send(c.ws, { type: 'signal', from: client.id, data: msg.data })
           break
         }
@@ -388,22 +388,36 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.type === 'dm') {
-      if (!client.id) return
+      if (!client.id) {
+        send(ws, { type: 'error', message: 'presence required to send DM' })
+        return
+      }
       const m = msg.message
-      if (!m?.toId || !m.text?.trim()) return
-      // Only relay to the intended peer (and never broadcast campus-wide)
+      if (!m?.toId || !m.text?.trim()) {
+        send(ws, { type: 'error', message: 'invalid DM' })
+        return
+      }
       const payload = {
-        ...m,
+        id: String(m.id || '').slice(0, 24) || `dm${Date.now()}`,
         fromId: client.id,
         fromName: (m.fromName || client.peer?.look?.displayName || 'guest').slice(0, 32),
+        toId: String(m.toId),
         text: String(m.text).trim().slice(0, 280),
         at: typeof m.at === 'number' ? m.at : Date.now(),
       }
+      let delivered = false
       for (const c of clients) {
-        if (c.id === payload.toId && c.ws.readyState === c.ws.OPEN) {
+        if (c.id === payload.toId && c.ws.readyState === 1) {
           send(c.ws, { type: 'dm', message: payload })
+          delivered = true
           break
         }
+      }
+      if (!delivered) {
+        send(ws, {
+          type: 'error',
+          message: 'ส่ง DM ไม่ถึง — คู่สนทนาอาจออฟไลน์หรือเปลี่ยนเซสชัน',
+        })
       }
       return
     }

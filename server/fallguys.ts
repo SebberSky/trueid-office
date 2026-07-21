@@ -40,7 +40,7 @@ function nameOf(c: Client) {
 
 function inArena(deps: Deps): Client[] {
   return [...deps.clients].filter(
-    (c) => c.id && c.peer?.roomId === FALLGUYS_ROOM_ID && c.ws.readyState === c.ws.OPEN,
+    (c) => c.id && c.peer?.roomId === FALLGUYS_ROOM_ID && c.ws.readyState === 1,
   )
 }
 
@@ -153,21 +153,25 @@ function activeRaceSnapshot(): FallGuysActiveRace | null {
 export function onFallGuysPresence(deps: Deps, client: Client) {
   const id = client.id
   if (!id) return
+  const nowIn = client.peer?.roomId === FALLGUYS_ROOM_ID
   const wasIn = arenaJoinedAt.has(id)
-  if (client.peer?.roomId === FALLGUYS_ROOM_ID) {
+  if (nowIn) {
     if (!wasIn) arenaJoinedAt.set(id, Date.now())
     // Late arrival during a live race → push snapshot so they can spectate
     if (!wasIn && (phase === 'racing' || phase === 'results') && !racers.has(id)) {
       const state = activeRaceSnapshot()
       if (state) deps.send(client.ws, { type: 'fallguys-race-state', state })
     }
-  } else {
+  } else if (wasIn) {
     arenaJoinedAt.delete(id)
     if (phase === 'racing' && racers.has(id)) {
       // Keep racer in race even if they walk out — client should lock them in zone.
     }
   }
-  if (phase === 'lobby' || phase === 'results') publishLobby(deps)
+  // Refresh lobby whenever zone membership changes, or on any lobby-phase presence
+  if (nowIn !== wasIn || phase === 'lobby' || phase === 'results') {
+    if (phase === 'lobby' || phase === 'results') publishLobby(deps)
+  }
 }
 
 export function onFallGuysLeave(deps: Deps, id: string | null) {

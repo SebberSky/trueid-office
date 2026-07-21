@@ -21,14 +21,26 @@ export class PresenceBus {
   private selfId: string
   private net: OfficeSocket
   private unsub: () => void
+  private unsubOpen: (() => void) | null = null
+  private hello: { email: string; look: CharacterLook } | null = null
 
   constructor(net: OfficeSocket, selfId: string, hello?: { email: string; look: CharacterLook }) {
     this.net = net
     this.selfId = selfId
-    if (hello) {
-      this.net.send({ type: 'hello', id: selfId, email: hello.email, look: hello.look })
-    }
+    this.hello = hello ?? null
     this.unsub = net.subscribe((msg) => this.onServer(msg))
+    // Re-send hello on every socket open so server always has client.id after reconnect.
+    this.unsubOpen = net.onOpen(() => this.sendHello())
+  }
+
+  private sendHello() {
+    if (!this.hello) return
+    this.net.send({
+      type: 'hello',
+      id: this.selfId,
+      email: this.hello.email,
+      look: this.hello.look,
+    })
   }
 
   private onServer(msg: ServerMsg) {
@@ -90,6 +102,7 @@ export class PresenceBus {
 
   destroy() {
     this.unsub()
+    this.unsubOpen?.()
     this.listeners.clear()
     this.signalListeners.clear()
   }

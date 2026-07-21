@@ -12,6 +12,17 @@ type ThreadState = {
 
 type Listener = (thread: ThreadState | null) => void
 
+function mergeMessages(...lists: DmMessage[][]): DmMessage[] {
+  const byId = new Map<string, DmMessage>()
+  for (const list of lists) {
+    for (const m of list) {
+      if (!m?.id) continue
+      byId.set(m.id, m)
+    }
+  }
+  return [...byId.values()].sort((a, b) => a.at - b.at)
+}
+
 /** 1:1 DM via WebSocket relay; history persisted in per-peer cookies (24h). */
 export class DmChatBus {
   private selfId: string
@@ -29,12 +40,30 @@ export class DmChatBus {
     this.unsub = net.subscribe((msg) => this.onServer(msg))
   }
 
+  /**
+   * Open (or focus) DM with peer.
+   * If that peer's room is already open → keep the same room and reload history from cookie.
+   * Otherwise open that peer's existing cookie thread (or empty).
+   */
   open(peerId: string, peerName: string) {
     if (peerId === this.selfId) return
     const stored = loadDmThread(peerId)
+    const name = peerName || stored.peerName || 'ผู้เล่น'
+
+    if (this.active?.peerId === peerId) {
+      // Same DM room — always reuse; refresh history from cookie
+      this.active.peerName = name || this.active.peerName
+      this.active.messages = mergeMessages(stored.messages, this.active.messages)
+      saveDmThread(peerId, this.active.peerName, this.active.messages)
+      this.unread.set(peerId, 0)
+      this.emit()
+      this.emitUnread()
+      return
+    }
+
     this.active = {
       peerId,
-      peerName: peerName || stored.peerName || 'ผู้เล่น',
+      peerName: name,
       messages: stored.messages,
     }
     this.unread.set(peerId, 0)
@@ -87,23 +116,38 @@ export class DmChatBus {
   private onServer(msg: ServerMsg) {
     if (msg.type !== 'dm') return
     const m = msg.message
+    if (!m?.fromId || !m?.toId) return
     if (m.fromId === this.selfId) return
-    // Incoming: we are the recipient
     if (m.toId !== this.selfId) return
+
     const peerId = m.fromId
     const peerName = m.fromName || 'ผู้เล่น'
 
+    // Persist into this peer's cookie thread first (source of history)
+    const stored = loadDmThread(peerId)
+    const merged = mergeMessages(stored.messages, [m])
+    const name = peerName || stored.peerName || 'ผู้เล่น'
+    saveDmThread(peerId, name, merged)
+
     if (this.active?.peerId === peerId) {
-      this.pushLocal(m, peerName)
-    } else {
-      const stored = loadDmThread(peerId)
-      const messages = [...stored.messages, m].filter(
-        (x, i, arr) => arr.findIndex((y) => y.id === x.id) === i,
-      )
-      saveDmThread(peerId, peerName || stored.peerName, messages)
+      // Same room already open — reuse it; reload history from cookie
+      this.active.peerName = name || this.active.peerName
+      this.active.messages = mergeMessages(merged, this.active.messages)
+      this.unread.set(peerId, 0)
+      this.emit()
+      this.emitUnread()
+      return
+    }
+
+    if (this.active) {
+      // Another DM room is open — keep it; only badge + cookie
       this.unread.set(peerId, (this.unread.get(peerId) ?? 0) + 1)
       this.emitUnread()
+      return
     }
+
+    // No panel open — open the existing cookie room for this peer
+    this.open(peerId, name)
   }
 
   private pushLocal(message: DmMessage, peerName: string) {
@@ -111,8 +155,11 @@ export class DmChatBus {
     if (!thread) return
     if (thread.messages.some((m) => m.id === message.id)) return
     thread.peerName = peerName || thread.peerName
-    thread.messages = [...thread.messages, message]
+    thread.messages = mergeMessages(thread.messages, [message])
     saveDmThread(thread.peerId, thread.peerName, thread.messages)
+    // Reload from cookie so UI always mirrors persisted history
+    const stored = loadDmThread(thread.peerId)
+    thread.messages = mergeMessages(stored.messages, thread.messages)
     this.emit()
   }
 
