@@ -64,11 +64,18 @@ export class CampusScene {
   private readonly headWorld = new THREE.Vector3()
   private readonly headNdc = new THREE.Vector3()
   private fishingGroup = new THREE.Group()
-  private fishingBobber: THREE.Mesh | null = null
+  private fishingBobber: THREE.Group | null = null
   private fishingLine: THREE.Line | null = null
+  private fishingRipples: THREE.Mesh[] = []
   private fishingActive = false
   private fishingBobberPx = { x: 0, y: 0 }
   private fishingClock = 0
+  /** 0 = just cast from hand, 1 = landed on water. */
+  private fishingCastT = 1
+  private fishingNibbleUntil = 0
+  private readonly fishHand = new THREE.Vector3()
+  private readonly fishBob = new THREE.Vector3()
+  private readonly fishMid = new THREE.Vector3()
   private playerLabelName = ''
 
   constructor(canvas: HTMLCanvasElement, map: WorldMap, look: CharacterLook) {
@@ -125,22 +132,48 @@ export class CampusScene {
     this.scene.add(this.player.root)
 
     this.fishingGroup.visible = false
-    const bobber = new THREE.Mesh(
-      new THREE.SphereGeometry(0.12, 10, 8),
-      new THREE.MeshStandardMaterial({ color: 0xe11d48, roughness: 0.35, metalness: 0.1 }),
-    )
-    bobber.castShadow = true
-    this.fishingBobber = bobber
-    this.fishingGroup.add(bobber)
+    this.fishingBobber = makeFishingBobber()
+    this.fishingGroup.add(this.fishingBobber)
+
+    // Sagging line (hand → mid → bobber)
     const lineGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(),
       new THREE.Vector3(),
       new THREE.Vector3(),
     ])
     this.fishingLine = new THREE.Line(
       lineGeo,
-      new THREE.LineBasicMaterial({ color: 0xcbd5e1, transparent: true, opacity: 0.85 }),
+      new THREE.LineBasicMaterial({
+        color: 0xf1f5f9,
+        transparent: true,
+        opacity: 1,
+        depthTest: false,
+        depthWrite: false,
+      }),
     )
+    this.fishingLine.renderOrder = 20
+    this.fishingLine.frustumCulled = false
     this.fishingGroup.add(this.fishingLine)
+
+    for (let i = 0; i < 3; i++) {
+      const ring = new THREE.Mesh(
+        new THREE.RingGeometry(0.12, 0.18, 32),
+        new THREE.MeshBasicMaterial({
+          color: 0xdbeafe,
+          transparent: true,
+          opacity: 0,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+          depthTest: false,
+        }),
+      )
+      ring.rotation.x = -Math.PI / 2
+      ring.visible = false
+      ring.renderOrder = 19
+      ring.frustumCulled = false
+      this.fishingRipples.push(ring)
+      this.fishingGroup.add(ring)
+    }
     this.scene.add(this.fishingGroup)
   }
 
@@ -195,24 +228,25 @@ export class CampusScene {
             this.waterMat = new THREE.MeshStandardMaterial({
               map: wMap,
               normalMap: normal,
-              normalScale: new THREE.Vector2(0.85, 0.85),
-              color: 0x4eb8e8,
-              roughness: 0.12,
-              metalness: 0.45,
+              normalScale: new THREE.Vector2(0.45, 0.45),
+              color: 0x7ad4ff,
+              roughness: 0.28,
+              metalness: 0.05,
               transparent: true,
-              opacity: 0.72,
+              opacity: 0.88,
               depthWrite: false,
-              envMapIntensity: 1.2,
+              emissive: new THREE.Color(0x3aa8e8),
+              emissiveIntensity: 0.22,
             })
           }
 
-          // Deep pond bed — teal/green so shallows read as water depth
+          // Bright pond bed — kept light so water reads as sky-blue, not navy
           const bed = new THREE.Mesh(
             new THREE.BoxGeometry(T, 0.22, T),
             new THREE.MeshStandardMaterial({
-              color: n % 3 === 0 ? 0x0d4a5c : n % 3 === 1 ? 0x0a3d52 : 0x125a4a,
-              roughness: 0.92,
-              metalness: 0.05,
+              color: n % 3 === 0 ? 0x2a9fd4 : n % 3 === 1 ? 0x2490c8 : 0x1f8ab8,
+              roughness: 0.85,
+              metalness: 0,
             }),
           )
           bed.position.set(tx + 0.5, -0.48, ty + 0.5)
@@ -223,7 +257,8 @@ export class CampusScene {
           const mesh = new THREE.Mesh(new THREE.PlaneGeometry(T * 1.02, T * 1.02), this.waterMat)
           mesh.rotation.x = -Math.PI / 2
           mesh.position.set(tx + 0.5, h + 0.02, ty + 0.5)
-          mesh.receiveShadow = true
+          // No receiveShadow — cast shadows turn the sheet navy under the sun
+          mesh.receiveShadow = false
           // Stagger UVs so ripples don't tile as identical stamps
           const uvs = mesh.geometry.attributes.uv
           for (let i = 0; i < uvs.count; i++) {
@@ -243,9 +278,9 @@ export class CampusScene {
             const foam = new THREE.Mesh(
               new THREE.PlaneGeometry(T * 0.92, T * 0.92),
               new THREE.MeshStandardMaterial({
-                color: 0xd8f0ff,
+                color: 0xe8f7ff,
                 transparent: true,
-                opacity: 0.22,
+                opacity: 0.35,
                 roughness: 0.55,
                 depthWrite: false,
               }),
@@ -869,21 +904,107 @@ export class CampusScene {
   setFishingCast(active: boolean, targetPx: { x: number; y: number } | null = null) {
     this.fishingActive = active && !!targetPx
     this.fishingGroup.visible = this.fishingActive
-    if (targetPx) this.fishingBobberPx = { x: targetPx.x, y: targetPx.y }
+    if (targetPx) {
+      this.fishingBobberPx = { x: targetPx.x, y: targetPx.y }
+      this.fishingClock = 0
+      this.fishingCastT = 0
+      this.fishingNibbleUntil = 0
+      for (const ring of this.fishingRipples) {
+        ring.visible = false
+        ;(ring.material as THREE.MeshBasicMaterial).opacity = 0
+      }
+    }
   }
 
   private updateFishingVisual(dt: number) {
     if (!this.fishingActive || !this.fishingBobber || !this.fishingLine) return
     this.fishingClock += dt
-    const { x: bx, z: bz } = toWorldXZ(this.fishingBobberPx.x, this.fishingBobberPx.y)
-    const bobY = TERRAIN_HEIGHT.water + 0.08 + Math.sin(this.fishingClock * 4.2) * 0.04
-    this.fishingBobber.position.set(bx, bobY, bz)
+    this.fishingCastT = Math.min(1, this.fishingCastT + dt / 0.55)
 
-    const hand = this.player.root.position
+    const target = toWorldXZ(this.fishingBobberPx.x, this.fishingBobberPx.y)
+    const root = this.player.root.position
+    // Cast from the water-facing side of the body (not character facing) so the
+    // line is visible from any approach angle around the pond.
+    const toX = target.x - root.x
+    const toZ = target.z - root.z
+    const toLen = Math.hypot(toX, toZ) || 1
+    const nx = toX / toLen
+    const nz = toZ / toLen
+
+    const hand = this.fishHand
+    hand.set(root.x + nx * 0.42, root.y + 1.05, root.z + nz * 0.42)
+
+    const waterY = TERRAIN_HEIGHT.water + 0.06
+    const cast = this.fishingCastT
+    const ease = 1 - Math.pow(1 - cast, 2.4)
+
+    // Arc from hand → splash landing
+    const midX = hand.x + (target.x - hand.x) * ease
+    const midZ = hand.z + (target.z - hand.z) * ease
+    const arc = Math.sin(ease * Math.PI) * 1.35
+    let bobY = hand.y + (waterY - hand.y) * ease + arc
+
+    const landed = cast >= 1
+    if (landed) {
+      // Idle bob + occasional hard nibble so the wait reads clearly
+      if (this.fishingClock > this.fishingNibbleUntil) {
+        if (Math.random() < 0.012) this.fishingNibbleUntil = this.fishingClock + 0.55
+      }
+      const nibbling = this.fishingClock < this.fishingNibbleUntil
+      if (nibbling) {
+        const t = 1 - (this.fishingNibbleUntil - this.fishingClock) / 0.55
+        bobY = waterY - 0.12 - Math.sin(t * Math.PI) * 0.22
+        this.fishingBobber.rotation.z = Math.sin(this.fishingClock * 28) * 0.55
+        this.fishingBobber.rotation.x = Math.cos(this.fishingClock * 22) * 0.35
+      } else {
+        bobY = waterY + Math.sin(this.fishingClock * 5.2) * 0.07
+        this.fishingBobber.rotation.z = Math.sin(this.fishingClock * 2.4) * 0.12
+        this.fishingBobber.rotation.x = Math.cos(this.fishingClock * 1.8) * 0.08
+      }
+    } else {
+      this.fishingBobber.rotation.set(0.4, 0, ease * 1.2)
+    }
+
+    this.fishBob.set(midX, bobY, midZ)
+    this.fishingBobber.position.copy(this.fishBob)
+    this.fishingBobber.scale.setScalar(landed ? 1.15 : 0.85 + ease * 0.3)
+    this.fishingBobber.frustumCulled = false
+
+    // Line sag
+    this.fishMid.set(
+      (hand.x + this.fishBob.x) * 0.5,
+      Math.min(hand.y, this.fishBob.y) - 0.25 - (1 - ease) * 0.1,
+      (hand.z + this.fishBob.z) * 0.5,
+    )
     const positions = this.fishingLine.geometry.attributes.position as THREE.BufferAttribute
-    positions.setXYZ(0, hand.x, hand.y + 1.05, hand.z)
-    positions.setXYZ(1, bx, bobY + 0.02, bz)
+    positions.setXYZ(0, hand.x, hand.y, hand.z)
+    positions.setXYZ(1, this.fishMid.x, this.fishMid.y, this.fishMid.z)
+    positions.setXYZ(2, this.fishBob.x, this.fishBob.y + 0.04, this.fishBob.z)
     positions.needsUpdate = true
+    this.fishingLine.geometry.computeBoundingSphere()
+
+    // Splash ripples after landing
+    if (landed) {
+      for (let i = 0; i < this.fishingRipples.length; i++) {
+        const ring = this.fishingRipples[i]!
+        const phase = (this.fishingClock * 0.85 + i * 0.45) % 1.35
+        const u = phase / 1.35
+        ring.visible = true
+        ring.position.set(target.x, waterY + 0.02, target.z)
+        const s = 0.55 + u * 2.8
+        ring.scale.set(s, s, s)
+        const mat = ring.material as THREE.MeshBasicMaterial
+        mat.opacity = (1 - u) * 0.55
+      }
+    }
+  }
+
+  /** Preferred facing while casting toward a water tile (pixel coords). */
+  static facingTowardWater(px: number, py: number, targetPx: number, targetPy: number): Facing {
+    const dx = targetPx - px
+    const dy = targetPy - py
+    if (Math.abs(dx) > Math.abs(dy)) return dx < 0 ? 'left' : 'right'
+    return dy < 0 ? 'up' : 'down'
   }
 
   syncPeers(peers: PeerPresence[], map: WorldMap, dt = 0) {
@@ -1086,8 +1207,17 @@ export class CampusScene {
     this.roomWalls.clear()
     this.fishingLine?.geometry.dispose()
     ;(this.fishingLine?.material as THREE.Material | undefined)?.dispose()
-    this.fishingBobber?.geometry.dispose()
-    ;(this.fishingBobber?.material as THREE.Material | undefined)?.dispose()
+    this.fishingBobber?.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return
+      obj.geometry.dispose()
+      const m = obj.material
+      if (Array.isArray(m)) m.forEach((x) => x.dispose())
+      else m.dispose()
+    })
+    for (const ring of this.fishingRipples) {
+      ring.geometry.dispose()
+      ;(ring.material as THREE.Material).dispose()
+    }
     this.waterMat?.dispose()
     this.waterMap?.dispose()
     this.waterNormal?.dispose()
@@ -1096,6 +1226,46 @@ export class CampusScene {
 }
 
 export { TILE }
+
+/** Bright cork bobber with red tip — reads clearly on blue water. */
+function makeFishingBobber() {
+  const g = new THREE.Group()
+  const body = new THREE.Mesh(
+    new THREE.SphereGeometry(0.16, 12, 10),
+    new THREE.MeshStandardMaterial({
+      color: 0xf8fafc,
+      roughness: 0.45,
+      metalness: 0.05,
+      emissive: 0xffffff,
+      emissiveIntensity: 0.12,
+    }),
+  )
+  body.castShadow = true
+  g.add(body)
+  const tip = new THREE.Mesh(
+    new THREE.SphereGeometry(0.09, 10, 8),
+    new THREE.MeshStandardMaterial({
+      color: 0xef4444,
+      roughness: 0.35,
+      emissive: 0xdc2626,
+      emissiveIntensity: 0.35,
+    }),
+  )
+  tip.position.y = 0.14
+  tip.castShadow = true
+  g.add(tip)
+  const stem = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.02, 0.02, 0.12, 6),
+    new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.7 }),
+  )
+  stem.position.y = 0.26
+  g.add(stem)
+  g.frustumCulled = false
+  g.traverse((o) => {
+    o.frustumCulled = false
+  })
+  return g
+}
 
 function addGrassTile(ground: THREE.Group, tx: number, ty: number, T: number) {
   const base = new THREE.Mesh(
@@ -1425,10 +1595,10 @@ function makeWaterTextures() {
       const i = (y * size + x) * 4
       const h = sample(x, y)
       const t = (h + 2.2) / 4.4
-      // Deep teal → bright cyan mottling (reads as caustics from above)
-      const r = Math.round(18 + t * 70 + Math.max(0, h) * 28)
-      const g = Math.round(95 + t * 95 + Math.max(0, h) * 40)
-      const b = Math.round(145 + t * 90)
+      // Bright sky-blue → cyan highlights (avoid dark navy under outdoor light)
+      const r = Math.round(90 + t * 90 + Math.max(0, h) * 35)
+      const g = Math.round(180 + t * 55 + Math.max(0, h) * 25)
+      const b = Math.round(220 + t * 30)
       cimg.data[i] = Math.min(255, r)
       cimg.data[i + 1] = Math.min(255, g)
       cimg.data[i + 2] = Math.min(255, b)
@@ -1456,8 +1626,8 @@ function makeWaterTextures() {
     const cy = ((i * 73) % size) + 8
     const rad = 10 + (i % 4) * 5
     const g = cctx.createRadialGradient(cx, cy, 1, cx, cy, rad)
-    g.addColorStop(0, 'rgba(200, 245, 255, 0.35)')
-    g.addColorStop(0.45, 'rgba(120, 200, 240, 0.12)')
+    g.addColorStop(0, 'rgba(230, 250, 255, 0.45)')
+    g.addColorStop(0.45, 'rgba(160, 220, 255, 0.18)')
     g.addColorStop(1, 'rgba(0, 0, 0, 0)')
     cctx.fillStyle = g
     cctx.beginPath()

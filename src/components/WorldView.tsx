@@ -60,6 +60,8 @@ export function WorldView() {
   const session = useAppStore((s) => s.session)!
   const goCreator = useAppStore((s) => s.goCreator)
   const logout = useAppStore((s) => s.logout)
+  const lastPose = useAppStore((s) => s.lastPose)
+  const setLastPose = useAppStore((s) => s.setLastPose)
   const worldActive = useAppStore((s) => s.screen === 'world')
   const worldActiveRef = useRef(worldActive)
   worldActiveRef.current = worldActive
@@ -70,8 +72,21 @@ export function WorldView() {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
 
-  const pos = useRef(pixelCenter(map.spawn.x, map.spawn.y))
-  const facing = useRef<Facing>('down')
+  const initialPose = useMemo(() => {
+    if (lastPose) {
+      const tx = Math.floor(lastPose.x / TILE)
+      const ty = Math.floor(lastPose.y / TILE)
+      if (canTraverse(map, tx, ty, canFlyOverWater(session.look))) {
+        return { x: lastPose.x, y: lastPose.y, facing: lastPose.facing as Facing }
+      }
+    }
+    const c = pixelCenter(map.spawn.x, map.spawn.y)
+    return { x: c.x, y: c.y, facing: 'down' as Facing }
+  }, [map, lastPose, session.look])
+
+  const pos = useRef({ x: initialPose.x, y: initialPose.y })
+  const facing = useRef<Facing>(initialPose.facing)
+  const poseAppliedRef = useRef(false)
   const keys = useRef(new Set<string>())
   const stickRef = useRef({ x: 0, y: 0 })
   const peersRef = useRef<ReturnType<PresenceBus['getPeers']>>([])
@@ -339,6 +354,12 @@ export function WorldView() {
     })
 
     const unsubLock = net.subscribe((msg) => {
+      if (msg.type === 'session-replaced') {
+        net.destroy()
+        busRef.current = null
+        logout('บัญชีนี้เข้าสู่ระบบจากอุปกรณ์อื่นแล้ว — อุปกรณ์นี้ถูกตัดการเชื่อมต่อ')
+        return
+      }
       if (msg.type === 'welcome') {
         applyLocks(msg.lockedRooms ?? [])
         const pins = new Map<string, PinnedMessage>()
@@ -350,6 +371,20 @@ export function WorldView() {
         if (msg.fallguysRace) applyFgRaceStateRef.current(msg.fallguysRace)
         if (msg.xo) setXoLobby(msg.xo)
         if (msg.xoGame) applyXoGameStateRef.current(msg.xoGame)
+        if (msg.lastPose && !poseAppliedRef.current) {
+          const tx = Math.floor(msg.lastPose.x / TILE)
+          const ty = Math.floor(msg.lastPose.y / TILE)
+          if (canTraverse(map, tx, ty, canFlyOverWater(session.look))) {
+            pos.current.x = msg.lastPose.x
+            pos.current.y = msg.lastPose.y
+            facing.current = msg.lastPose.facing
+            setLastPose(msg.lastPose)
+            poseAppliedRef.current = true
+            publishRef.current()
+          }
+        } else if (!poseAppliedRef.current) {
+          poseAppliedRef.current = true
+        }
         return
       }
       if (msg.type === 'fallguys-lobby') {
@@ -534,7 +569,7 @@ export function WorldView() {
       net.destroy()
       netRef.current = null
     }
-  }, [session.id, session.email, session.look, applyLocks, pushRoomSys])
+  }, [session.id, session.email, session.look, applyLocks, pushRoomSys, logout, map, setLastPose])
 
   useEffect(() => {
     // Use e.code so WASD still works under Thai IME (ไ/ฟ/ห/ก on those keys)
@@ -804,6 +839,8 @@ export function WorldView() {
       if (dx !== 0 || dy !== 0) {
         // Any move control recenters the minimap / camera on the player
         scene.resetCameraPan()
+        // Walking cancels fishing
+        if (fishingActiveRef.current) stopFishingRef.current()
         const len = Math.hypot(dx, dy) || 1
         dx /= len
         dy /= len
@@ -813,6 +850,17 @@ export function WorldView() {
         tryMove(pos.current.x + dx * step, pos.current.y)
         tryMove(pos.current.x, pos.current.y + dy * step)
         moving = true
+      } else if (fishingActiveRef.current) {
+        // Keep facing the cast target so pose + line stay aligned to the pond
+        const target = nearestWaterCastTarget(map, pos.current.x, pos.current.y)
+        if (target) {
+          facing.current = CampusScene.facingTowardWater(
+            pos.current.x,
+            pos.current.y,
+            target.x,
+            target.y,
+          )
+        }
       }
 
       const atEdge = isAtWaterEdge(map, pos.current.x, pos.current.y)
@@ -1017,6 +1065,13 @@ export function WorldView() {
       stopFishing()
       return
     }
+    // Face the pond so the cast reads correctly from any shoreline
+    facing.current = CampusScene.facingTowardWater(
+      pos.current.x,
+      pos.current.y,
+      target.x,
+      target.y,
+    )
     clearFishTimer()
     fishPhaseRef.current = 'waiting'
     fishingActiveRef.current = true
@@ -1190,7 +1245,7 @@ export function WorldView() {
           <div className="world__fish-hint">กด F เพื่อตกปลา</div>
         )}
         {fishingActive && !fishCatch && (
-          <div className="world__fish-hint is-wait">กำลังรอปลากัด…</div>
+          <div className="world__fish-hint is-wait">กำลังรอปลากัด… ดูทุ่นบนน้ำ</div>
         )}
         {roomId === FALLGUYS_ROOM_ID && fgRole === 'none' && fgRacePhase !== 'racing' && (
           <div className="world__fg-lobby">

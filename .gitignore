@@ -12,6 +12,7 @@ dist-ssr/
 
 # Runtime data (character appearances) — keep folder via .gitkeep
 server/data/appearances/
+server/data/positions/
 !server/data/.gitkeep
 
 # Env & secrets

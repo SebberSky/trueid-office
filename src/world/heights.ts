@@ -22,7 +22,7 @@ export const TERRAIN_HEX: Record<TerrainType, number> = {
   path: 0xc9b89a,
   floor: 0xeee6d8,
   sand: 0xe0d09a,
-  water: 0x2f9fd4,
+  water: 0x4fc3f0,
   rock: 0x6e737a,
   wall: 0x3d4450,
   desk: 0x8b6914,
