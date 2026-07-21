@@ -58,7 +58,8 @@ function recomputeHost(deps: Deps) {
   let best: Client | null = null
   let bestT = Infinity
   for (const c of zone) {
-    const t = boothJoinedAt.get(c.id!) ?? Date.now()
+    if (!boothJoinedAt.has(c.id!)) boothJoinedAt.set(c.id!, Date.now())
+    const t = boothJoinedAt.get(c.id!)!
     if (t < bestT) {
       bestT = t
       best = c
@@ -69,9 +70,12 @@ function recomputeHost(deps: Deps) {
 
 function lobbySnapshot(deps: Deps): XoLobbyState {
   recomputeHost(deps)
+  const zone = [...inBooth(deps)].sort(
+    (a, b) => (boothJoinedAt.get(a.id!) ?? 0) - (boothJoinedAt.get(b.id!) ?? 0),
+  )
   return {
     hostId,
-    inZone: inBooth(deps).map((c) => ({ id: c.id!, name: nameOf(c) })),
+    inZone: zone.map((c) => ({ id: c.id!, name: nameOf(c) })),
   }
 }
 
@@ -114,18 +118,19 @@ function endGame(deps: Deps, winner: string | null, reason: 'win' | 'draw' | 'fo
 
 function startGame(deps: Deps, requesterId: string) {
   if (phase === 'playing') return
-  recomputeHost(deps)
-  if (hostId !== requesterId) {
-    const c = [...deps.clients].find((x) => x.id === requesterId)
-    if (c) deps.send(c.ws, { type: 'error', message: 'only host can start XO' })
-    return
-  }
   const zone = inBooth(deps)
   if (zone.length !== 2) {
     const c = [...deps.clients].find((x) => x.id === requesterId)
     if (c) deps.send(c.ws, { type: 'error', message: 'XO needs exactly 2 players' })
     return
   }
+  if (!zone.some((c) => c.id === requesterId)) {
+    const c = [...deps.clients].find((x) => x.id === requesterId)
+    if (c) deps.send(c.ws, { type: 'error', message: 'must be in XO zone to start' })
+    return
+  }
+  // Either player in the full zone may start; earliest joiner still gets X.
+  recomputeHost(deps)
 
   // Host = X, other = O
   const ordered = [...zone].sort(

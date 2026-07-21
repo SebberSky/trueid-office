@@ -10,7 +10,6 @@ type Props = {
   phase: 'playing' | 'results'
   winnerId: string | null
   reason: 'win' | 'draw' | 'forfeit' | null
-  isHost: boolean
   onMove: (cell: number) => void
   onRestart: () => void
   onQuit: () => void
@@ -24,7 +23,6 @@ export function XoGame({
   phase,
   winnerId,
   reason,
-  isHost,
   onMove,
   onRestart,
   onQuit,
@@ -88,7 +86,7 @@ export function XoGame({
         </div>
 
         <div className="xo__actions">
-          {phase === 'results' && isHost && (
+          {phase === 'results' && (
             <button type="button" className="xo__btn primary" onClick={onRestart}>
               เล่นอีกครั้ง
             </button>

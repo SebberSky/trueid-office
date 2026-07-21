@@ -11,7 +11,6 @@ interface Props {
   players: { id: string; name: string }[]
   scores: FallGuysRacer[]
   raceOver: boolean
-  isHost: boolean
   /** Watch-only — no controls / no progress sync. */
   spectating?: boolean
   onProgress: (progress: number, finished: boolean) => void
@@ -30,7 +29,6 @@ export function FallGuysGame({
   players,
   scores,
   raceOver,
-  isHost,
   spectating = false,
   onProgress,
   onRestart,
@@ -309,7 +307,7 @@ export function FallGuysGame({
             ))}
           </ol>
           <div className="fg__actions">
-            {!spectating && isHost && (
+            {!spectating && (
               <button type="button" className="fg__btn primary" onClick={onRestart}>
                 เริ่มใหม่
               </button>
@@ -318,9 +316,6 @@ export function FallGuysGame({
               {spectating ? 'ออกจากการชม' : 'เลิกเล่น'}
             </button>
           </div>
-          {!spectating && !isHost && (
-            <p className="fg__hint">รอโฮสต์กดเริ่มใหม่ หรือออกได้เลย</p>
-          )}
           {spectating && <p className="fg__hint">เดินออกจากโซนชมพูก็ออกจากการชมได้</p>}
         </div>
       )}
