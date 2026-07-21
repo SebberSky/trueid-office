@@ -10,7 +10,7 @@ export interface ChatMessage {
   roomId?: string
 }
 
-/** One pinned message per room (server-authoritative while room occupied). */
+/** One pinned message per room (server-authoritative until unpinned). */
 export interface PinnedMessage {
   roomId: string
   messageId: string

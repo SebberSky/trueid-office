@@ -5,10 +5,10 @@ export type AnimalKind =
   | 'cat' // feline pad
   | 'dog' // canine trot
   | 'bunny' // hop
-  | 'bird' // flies while moving
+  | 'bird' // flies while moving / over water
   | 'worm' // undulate
   | 'snake' // slither
-  | 'dragon' // stomp + wings
+  | 'dragon' // walks on land, flies over water, breathes fire (E)
   | 'yoda' // tiny shuffle
 
 export const ANIMAL_KIND_LABELS: Record<AnimalKind, string> = {
@@ -39,6 +39,13 @@ export function normalizeAnimalKind(kind: string | undefined): AnimalKind {
   }
   if (kind && kind in ANIMAL_KIND_LABELS) return kind as AnimalKind
   return 'cat'
+}
+
+/** Birds and dragons can traverse water tiles by flying. */
+export function canFlyOverWater(look: CharacterLook): boolean {
+  if (look.species !== 'animal') return false
+  const kind = normalizeAnimalKind(look.animalKind)
+  return kind === 'bird' || kind === 'dragon'
 }
 
 export type HairStyle = 'short' | 'medium' | 'long' | 'spiky' | 'bun' | 'bald'
@@ -110,6 +117,8 @@ export interface PeerPresence {
   sharing: boolean
   /** Timestamp of last jump start — remotes replay the hop when this changes. */
   jumpAt?: number
+  /** Timestamp of last dragon fire breath — remotes replay the VFX when this changes. */
+  fireAt?: number
   updatedAt: number
 }
 

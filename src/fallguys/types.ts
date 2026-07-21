@@ -28,3 +28,10 @@ export type FallGuysRaceOver = {
   raceId: number
   ranking: FallGuysRacer[]
 }
+
+/** Snapshot for late joiners / welcome while a race is live. */
+export type FallGuysActiveRace = {
+  phase: 'racing' | 'results'
+  race: FallGuysRaceStart
+  scores: FallGuysRacer[]
+}

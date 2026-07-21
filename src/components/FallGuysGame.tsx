@@ -12,6 +12,8 @@ interface Props {
   scores: FallGuysRacer[]
   raceOver: boolean
   isHost: boolean
+  /** Watch-only — no controls / no progress sync. */
+  spectating?: boolean
   onProgress: (progress: number, finished: boolean) => void
   onRestart: () => void
   onQuit: () => void
@@ -20,7 +22,7 @@ interface Props {
 const TRACK_LEN = 2400
 const FINISH_X = TRACK_LEN - 80
 
-/** Simple Fall Guys-style side-scroller race for arena participants. */
+/** Simple Fall Guys-style side-scroller race for arena participants / spectators. */
 export function FallGuysGame({
   selfId,
   selfName,
@@ -29,19 +31,22 @@ export function FallGuysGame({
   scores,
   raceOver,
   isHost,
+  spectating = false,
   onProgress,
   onRestart,
   onQuit,
 }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
-  const [phase, setPhase] = useState<Phase>('countdown')
+  const [phase, setPhase] = useState<Phase>(spectating || raceOver ? 'racing' : 'countdown')
   const [count, setCount] = useState(3)
   const [localFinished, setLocalFinished] = useState(false)
-  const phaseRef = useRef<Phase>('countdown')
+  const phaseRef = useRef<Phase>(spectating || raceOver ? 'racing' : 'countdown')
   const scoresRef = useRef(scores)
   const onProgressRef = useRef(onProgress)
+  const spectatingRef = useRef(spectating)
   scoresRef.current = scores
   onProgressRef.current = onProgress
+  spectatingRef.current = spectating
 
   useEffect(() => {
     phaseRef.current = phase
@@ -52,6 +57,12 @@ export function FallGuysGame({
   }, [raceOver])
 
   useEffect(() => {
+    if (spectating) {
+      setPhase(raceOver ? 'results' : 'racing')
+      phaseRef.current = raceOver ? 'results' : 'racing'
+      setLocalFinished(false)
+      return
+    }
     setPhase('countdown')
     setCount(3)
     setLocalFinished(false)
@@ -68,7 +79,7 @@ export function FallGuysGame({
       }
     }, 800)
     return () => window.clearInterval(id)
-  }, [raceId])
+  }, [raceId, spectating, raceOver])
 
   useEffect(() => {
     const canvas = canvasRef.current
@@ -93,6 +104,7 @@ export function FallGuysGame({
 
     const keys = new Set<string>()
     const onDown = (e: KeyboardEvent) => {
+      if (spectatingRef.current) return
       if (['ArrowLeft', 'ArrowRight', 'ArrowUp', 'KeyA', 'KeyD', 'KeyW', 'Space'].includes(e.code)) {
         e.preventDefault()
         keys.add(e.code)
@@ -123,8 +135,13 @@ export function FallGuysGame({
       const dt = Math.min(0.05, (now - last) / 1000)
       last = now
       const gy = groundY()
+      const watching = spectatingRef.current
 
-      if (phaseRef.current === 'racing' && !finished) {
+      for (const hm of hammers) {
+        hm.ang += hm.spd * dt
+      }
+
+      if (!watching && phaseRef.current === 'racing' && !finished) {
         let move = 0
         if (keys.has('ArrowLeft') || keys.has('KeyA')) move -= 1
         if (keys.has('ArrowRight') || keys.has('KeyD')) move += 1
@@ -143,7 +160,6 @@ export function FallGuysGame({
         }
 
         for (const hm of hammers) {
-          hm.ang += hm.spd * dt
           const tipX = hm.x + Math.cos(hm.ang) * 70
           const tipY = gy - 40 + Math.sin(hm.ang) * 70
           const beanX = px
@@ -166,7 +182,13 @@ export function FallGuysGame({
         }
       }
 
-      camX += (px - w * 0.35 - camX) * Math.min(1, dt * 6)
+      if (watching) {
+        const lead = [...scoresRef.current].sort((a, b) => b.progress - a.progress)[0]
+        const follow = lead ? 40 + lead.progress * (FINISH_X - 40) : FINISH_X * 0.35
+        camX += (follow - w * 0.35 - camX) * Math.min(1, dt * 4)
+      } else {
+        camX += (px - w * 0.35 - camX) * Math.min(1, dt * 6)
+      }
 
       const grad = ctx.createLinearGradient(0, 0, 0, h)
       grad.addColorStop(0, '#7dd3fc')
@@ -195,7 +217,6 @@ export function FallGuysGame({
       ctx.fillText('FINISH', FINISH_X - camX - 10, gy - 130)
 
       for (const hm of hammers) {
-        hm.ang += phaseRef.current === 'racing' ? 0 : 0 // already advanced above when racing
         const bx = hm.x - camX
         const by = gy - 40
         ctx.strokeStyle = '#334155'
@@ -211,16 +232,25 @@ export function FallGuysGame({
       }
 
       for (const s of scoresRef.current) {
-        if (s.id === selfId) continue
         const gx = Math.min(FINISH_X, 40 + s.progress * (FINISH_X - 40))
-        drawBean(ctx, gx - camX, gy - 28, s.name.slice(0, 8), '#a78bfa', 0.55)
+        const isSelf = s.id === selfId
+        if (watching) {
+          drawBean(ctx, gx - camX, gy - 28, s.name.slice(0, 8), isSelf ? '#38bdf8' : '#a78bfa', isSelf ? 1 : 0.85)
+        } else if (!isSelf) {
+          drawBean(ctx, gx - camX, gy - 28, s.name.slice(0, 8), '#a78bfa', 0.55)
+        }
       }
-      drawBean(ctx, px - camX, gy - 28 + py, selfName.slice(0, 8), '#38bdf8', 1)
+      if (!watching) {
+        drawBean(ctx, px - camX, gy - 28 + py, selfName.slice(0, 8), '#38bdf8', 1)
+      }
 
+      const barProg = watching
+        ? Math.max(0, ...scoresRef.current.map((s) => s.progress))
+        : Math.min(1, px / FINISH_X)
       ctx.fillStyle = 'rgba(15,23,42,0.55)'
       ctx.fillRect(16, 16, w - 32, 14)
-      ctx.fillStyle = '#f472b6'
-      ctx.fillRect(16, 16, (w - 32) * Math.min(1, px / FINISH_X), 14)
+      ctx.fillStyle = watching ? '#c084fc' : '#f472b6'
+      ctx.fillRect(16, 16, (w - 32) * barProg, 14)
 
       raf = requestAnimationFrame(tick)
     }
@@ -244,14 +274,20 @@ export function FallGuysGame({
   const showBoard = phase === 'results' || raceOver
 
   return (
-    <div className="fg">
+    <div className={`fg ${spectating ? 'is-spectating' : ''}`}>
+      {spectating && (
+        <div className="fg__spectate-banner">ผู้ชม · ชมการแข่งอย่างเดียว</div>
+      )}
       <div className="fg__stage">
         <canvas ref={canvasRef} />
-        {phase === 'countdown' && (
+        {!spectating && phase === 'countdown' && (
           <div className="fg__countdown">
             <span>{count}</span>
             <p>ไปเลย {players.length} คน!</p>
           </div>
+        )}
+        {spectating && !showBoard && (
+          <div className="fg__finish-toast">กำลังชม · {players.length} คนแข่ง</div>
         )}
         {localFinished && !showBoard && (
           <div className="fg__finish-toast">เข้าเส้นชัยแล้ว — รอคนอื่น…</div>
@@ -260,7 +296,7 @@ export function FallGuysGame({
 
       {showBoard && (
         <div className="fg__board">
-          <h2>ผลการแข่งขัน</h2>
+          <h2>{spectating ? 'ผลการแข่งขัน (ผู้ชม)' : 'ผลการแข่งขัน'}</h2>
           <ol>
             {ranking.map((r, i) => (
               <li key={r.id} className={r.id === selfId ? 'is-self' : undefined}>
@@ -273,16 +309,27 @@ export function FallGuysGame({
             ))}
           </ol>
           <div className="fg__actions">
-            {isHost && (
+            {!spectating && isHost && (
               <button type="button" className="fg__btn primary" onClick={onRestart}>
                 เริ่มใหม่
               </button>
             )}
             <button type="button" className="fg__btn" onClick={onQuit}>
-              เลิกเล่น
+              {spectating ? 'ออกจากการชม' : 'เลิกเล่น'}
             </button>
           </div>
-          {!isHost && <p className="fg__hint">รอโฮสต์กดเริ่มใหม่ หรือออกได้เลย</p>}
+          {!spectating && !isHost && (
+            <p className="fg__hint">รอโฮสต์กดเริ่มใหม่ หรือออกได้เลย</p>
+          )}
+          {spectating && <p className="fg__hint">เดินออกจากโซนชมพูก็ออกจากการชมได้</p>}
+        </div>
+      )}
+
+      {spectating && !showBoard && (
+        <div className="fg__spectate-actions">
+          <button type="button" className="fg__btn" onClick={onQuit}>
+            ออกจากการชม
+          </button>
         </div>
       )}
     </div>

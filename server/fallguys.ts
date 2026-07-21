@@ -3,6 +3,7 @@ import type { PeerPresence } from '../src/types'
 import type { ServerMsg } from '../shared/protocol'
 import {
   FALLGUYS_ROOM_ID,
+  type FallGuysActiveRace,
   type FallGuysLobbyState,
   type FallGuysRacer,
 } from '../src/fallguys/types'
@@ -135,15 +136,35 @@ function startRace(deps: Deps, requesterId: string) {
   })
 }
 
+function activeRaceSnapshot(): FallGuysActiveRace | null {
+  if (phase !== 'racing' && phase !== 'results') return null
+  if (raceId <= 0 || racers.size === 0) return null
+  return {
+    phase,
+    race: {
+      raceId,
+      startedAt,
+      players: [...racers.values()].map((r) => ({ id: r.id, name: r.name })),
+    },
+    scores: rankingList(),
+  }
+}
+
 export function onFallGuysPresence(deps: Deps, client: Client) {
   const id = client.id
   if (!id) return
+  const wasIn = arenaJoinedAt.has(id)
   if (client.peer?.roomId === FALLGUYS_ROOM_ID) {
-    if (!arenaJoinedAt.has(id)) arenaJoinedAt.set(id, Date.now())
+    if (!wasIn) arenaJoinedAt.set(id, Date.now())
+    // Late arrival during a live race → push snapshot so they can spectate
+    if (!wasIn && (phase === 'racing' || phase === 'results') && !racers.has(id)) {
+      const state = activeRaceSnapshot()
+      if (state) deps.send(client.ws, { type: 'fallguys-race-state', state })
+    }
   } else {
     arenaJoinedAt.delete(id)
     if (phase === 'racing' && racers.has(id)) {
-      // Keep racer in race even if they walk out — progress can still update.
+      // Keep racer in race even if they walk out — client should lock them in zone.
     }
   }
   if (phase === 'lobby' || phase === 'results') publishLobby(deps)
@@ -197,4 +218,8 @@ export function handleFallGuysMsg(
 
 export function fallGuysWelcomeLobby(deps: Deps): FallGuysLobbyState {
   return lobbySnapshot(deps)
+}
+
+export function fallGuysWelcomeRace(): FallGuysActiveRace | null {
+  return activeRaceSnapshot()
 }

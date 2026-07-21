@@ -4,7 +4,8 @@ import { MAP_H, MAP_W, TILE, isWaterAt, roomAt, roomDoor } from './terrain'
 import { TERRAIN_HEIGHT, TERRAIN_HEX, surfaceY, toWorldXZ } from './heights'
 import { Character3D } from '../character/Character3D'
 import type { CharacterLook, Facing, PeerPresence, RoomDef } from '../types'
-import { normalizeAnimalKind } from '../types'
+import { canFlyOverWater } from '../types'
+import { FALLGUYS_ROOM_ID } from '../fallguys/types'
 
 /** 1 = max zoom in (character). Min zoom stays mid-range — no full-map pullback. */
 const ZOOM_DEFAULT = 0.42
@@ -23,6 +24,7 @@ type PeerMotion = {
   ty: number
   facing: Facing
   lastJumpAt: number
+  lastFireAt: number
 }
 
 export class CampusScene {
@@ -30,11 +32,14 @@ export class CampusScene {
   readonly scene = new THREE.Scene()
   readonly camera: THREE.PerspectiveCamera
   private player: Character3D
-  private playerIsBird = false
+  /** Bird or dragon — fly over water; camera ignores flap bob. */
+  private playerCanFly = false
   private peers = new Map<string, Character3D>()
   private peerMotion = new Map<string, PeerMotion>()
   private waterMeshes: THREE.Mesh[] = []
   private roofs = new Map<string, THREE.Group>()
+  /** Wall + trim + door frame shells — sink / fade when local player is inside. */
+  private roomWalls = new Map<string, THREE.Group>()
   /** Padlock sprites at room doors — visible when room is locked. */
   private doorLocks = new Map<string, THREE.Group>()
   private clock = 0
@@ -107,8 +112,7 @@ export class CampusScene {
     this.scene.add(rim)
 
     this.buildTerrain(map)
-    this.playerIsBird =
-      look.species === 'animal' && normalizeAnimalKind(look.animalKind) === 'bird'
+    this.playerCanFly = canFlyOverWater(look)
     this.player = new Character3D(look)
     this.playerLabelName = (look.displayName || 'guest').slice(0, 10)
     this.scene.add(this.player.root)
@@ -150,6 +154,7 @@ export class CampusScene {
     const grassA = 0x5cad4f
     const grassB = 0x4f9a45
     const grassC = 0x6bb85a
+    const fallGuysPad = map.rooms.find((r) => r.id === FALLGUYS_ROOM_ID) ?? null
 
     for (let ty = 0; ty < MAP_H; ty++) {
       for (let tx = 0; tx < MAP_W; tx++) {
@@ -157,8 +162,17 @@ export class CampusScene {
         const h = TERRAIN_HEIGHT[type]
         let color = TERRAIN_HEX[type]
         const n = (tx * 13 + ty * 7) % 17
+        const inFallGuys =
+          !!fallGuysPad &&
+          tx >= fallGuysPad.x &&
+          tx < fallGuysPad.x + fallGuysPad.w &&
+          ty >= fallGuysPad.y &&
+          ty < fallGuysPad.y + fallGuysPad.h
 
-        if (type === 'grass') {
+        if (inFallGuys && (type === 'plaza' || type === 'plazaBorder')) {
+          // Solid pink pad — no yellow checker
+          color = type === 'plazaBorder' ? 0xd946ef : 0xff4fd8
+        } else if (type === 'grass') {
           color = n % 3 === 0 ? grassA : n % 3 === 1 ? grassB : grassC
         } else if (type === 'path' && n % 5 === 0) {
           color = 0xbba888
@@ -274,7 +288,7 @@ export class CampusScene {
           }
         }
 
-        if (type === 'plazaBorder' && n % 3 === 0) {
+        if (type === 'plazaBorder' && n % 3 === 0 && !inFallGuys) {
           const bead = new THREE.Mesh(
             new THREE.BoxGeometry(0.18, 0.1, 0.18),
             new THREE.MeshStandardMaterial({ color: 0xd97706, roughness: 0.6, metalness: 0.15 }),
@@ -286,7 +300,8 @@ export class CampusScene {
     }
 
     for (const room of map.rooms) {
-      if (room.kind === 'plaza') this.buildPlazaShell(ground, room)
+      if (room.id === FALLGUYS_ROOM_ID) this.buildFallGuysPad(ground, room)
+      else if (room.kind === 'plaza') this.buildPlazaShell(ground, room)
       else this.buildRoomShell(ground, room)
     }
 
@@ -368,6 +383,18 @@ export class CampusScene {
       placeBuilding(-ring, z, i++ * 53, parent)
       placeBuilding(MAP_W + ring, z + 0.2, i++ * 59, parent)
     }
+  }
+
+  /** Minimal solid pad for Fall Guys — no stage / benches / plaza props. */
+  private buildFallGuysPad(ground: THREE.Group, room: RoomDef) {
+    const cx = room.x + room.w / 2
+    const cz = room.y + room.h / 2
+    const plazaH = TERRAIN_HEIGHT.plaza
+    const tileThick = Math.max(0.12, Math.abs(plazaH) + 0.15)
+    const floorTop = plazaH / 2 + tileThick / 2
+    const plate = makeFloorPlate(room.name, room.color, Math.min(6.5, room.w - 1.5), 1.35)
+    plate.position.set(cx, floorTop + 0.04, cz)
+    ground.add(plate)
   }
 
   private buildPlazaShell(ground: THREE.Group, room: RoomDef) {
@@ -463,12 +490,20 @@ export class CampusScene {
       color: 0x4a5568,
       roughness: 0.85,
       metalness: 0.05,
+      transparent: true,
+      opacity: 0.96,
+      depthWrite: true,
     })
     const trimMat = new THREE.MeshStandardMaterial({
       color: accent,
       roughness: 0.55,
       metalness: 0.1,
+      transparent: true,
+      opacity: 0.96,
+      depthWrite: true,
     })
+
+    const wallGroup = new THREE.Group()
 
     const addWall = (x: number, z: number, w: number, d: number) => {
       if (w < 0.35 || d < 0.35) return
@@ -476,10 +511,10 @@ export class CampusScene {
       panel.position.set(x, ROOM_WALL_H / 2, z)
       panel.castShadow = true
       panel.receiveShadow = true
-      ground.add(panel)
+      wallGroup.add(panel)
       const band = new THREE.Mesh(new THREE.BoxGeometry(w + 0.02, 0.12, d + 0.02), trimMat)
       band.position.set(x, ROOM_WALL_H - 0.2, z)
-      ground.add(band)
+      wallGroup.add(band)
     }
 
     const thick = 0.85
@@ -536,31 +571,31 @@ export class CampusScene {
     if (room.door === 's') {
       frameX = door.doorX + 1
       frameZ = door.doorY + 0.55
-      ground.add(framePost(door.doorX + 0.05, frameZ, frameH, trimMat))
-      ground.add(framePost(door.doorX2 + 0.95, frameZ, frameH, trimMat))
+      wallGroup.add(framePost(door.doorX + 0.05, frameZ, frameH, trimMat))
+      wallGroup.add(framePost(door.doorX2 + 0.95, frameZ, frameH, trimMat))
     } else if (room.door === 'n') {
       frameX = door.doorX + 1
       frameZ = door.doorY - 0.55
-      ground.add(framePost(door.doorX + 0.05, frameZ, frameH, trimMat))
-      ground.add(framePost(door.doorX2 + 0.95, frameZ, frameH, trimMat))
+      wallGroup.add(framePost(door.doorX + 0.05, frameZ, frameH, trimMat))
+      wallGroup.add(framePost(door.doorX2 + 0.95, frameZ, frameH, trimMat))
     } else if (room.door === 'e') {
       frameX = door.doorX + 0.55
       frameZ = door.doorY + 1
       lintelW = 0.28
       lintelD = 2.3
-      ground.add(framePost(frameX, door.doorY + 0.05, frameH, trimMat))
-      ground.add(framePost(frameX, door.doorY2 + 0.95, frameH, trimMat))
+      wallGroup.add(framePost(frameX, door.doorY + 0.05, frameH, trimMat))
+      wallGroup.add(framePost(frameX, door.doorY2 + 0.95, frameH, trimMat))
     } else {
       frameX = door.doorX - 0.55
       frameZ = door.doorY + 1
       lintelW = 0.28
       lintelD = 2.3
-      ground.add(framePost(frameX, door.doorY + 0.05, frameH, trimMat))
-      ground.add(framePost(frameX, door.doorY2 + 0.95, frameH, trimMat))
+      wallGroup.add(framePost(frameX, door.doorY + 0.05, frameH, trimMat))
+      wallGroup.add(framePost(frameX, door.doorY2 + 0.95, frameH, trimMat))
     }
     const lintel = new THREE.Mesh(new THREE.BoxGeometry(lintelW, 0.22, lintelD), trimMat)
     lintel.position.set(frameX, frameH + 0.1, frameZ)
-    ground.add(lintel)
+    wallGroup.add(lintel)
 
     const roofMat = new THREE.MeshStandardMaterial({
       color: accent.clone().multiplyScalar(0.55),
@@ -625,9 +660,11 @@ export class CampusScene {
       plate.rotation.y = Math.PI / 2
       plate.position.set(rx + 0.5 - thick / 2 - 0.045, 1.72, door.doorY2 + 1.5)
     }
-    ground.add(plate)
+    wallGroup.add(plate)
+    ground.add(wallGroup)
+    this.roomWalls.set(room.id, wallGroup)
 
-    // Padlock over the doorway (hidden until locked)
+    // Padlock over the doorway (hidden until locked) — stays upright outside wall sink
     const lock = makeDoorPadlock()
     if (room.door === 's') {
       lock.position.set(door.doorX + 1, 1.35, door.doorY + 0.7)
@@ -671,6 +708,11 @@ export class CampusScene {
   /** Visual hop for the local player (Space). */
   jump() {
     this.player.triggerJump()
+  }
+
+  /** Dragon fire breath (E). */
+  breathFire() {
+    this.player.triggerFireBreath()
   }
 
   setLocalMic(voiceOn: boolean) {
@@ -731,6 +773,7 @@ export class CampusScene {
           ty: p.y,
           facing: p.facing,
           lastJumpAt: p.jumpAt ?? 0,
+          lastFireAt: p.fireAt ?? 0,
         }
         this.peerMotion.set(p.id, motion)
       }
@@ -743,6 +786,10 @@ export class CampusScene {
       if (p.jumpAt && p.jumpAt !== motion.lastJumpAt) {
         motion.lastJumpAt = p.jumpAt
         avatar.triggerJump()
+      }
+      if (p.fireAt && p.fireAt !== motion.lastFireAt) {
+        motion.lastFireAt = p.fireAt
+        avatar.triggerFireBreath()
       }
 
       const dx = motion.tx - motion.x
@@ -763,9 +810,8 @@ export class CampusScene {
       const moving = dist > 1.2
       const { x, z } = toWorldXZ(motion.x, motion.y)
       const y = surfaceY(map, motion.x, motion.y)
-      const isBird =
-        p.look.species === 'animal' && normalizeAnimalKind(p.look.animalKind) === 'bird'
-      const overWater = isBird && isWaterAt(map, motion.x, motion.y)
+      const overWater =
+        canFlyOverWater(p.look) && isWaterAt(map, motion.x, motion.y)
       avatar.setPose(x, z, y, motion.facing, moving, dt, overWater)
     }
     for (const [id, avatar] of this.peers) {
@@ -797,20 +843,40 @@ export class CampusScene {
     this.player.setPose(x, z, y, facing, moving, dt, overWater)
     this.updateFishingVisual(dt)
 
-    // Soften / hide roof + beams when standing inside that room so the camera isn't blocked
+    // Soften / sink roof + walls when inside so the character stays visible
     const inside = roomAt(map, px, py)
     for (const room of map.rooms) {
-      const roofGroup = this.roofs.get(room.id)
-      if (!roofGroup) continue
       const hide = inside?.id === room.id
-      roofGroup.traverse((obj) => {
-        if (!(obj instanceof THREE.Mesh)) return
-        const mat = obj.material as THREE.MeshStandardMaterial
-        if (!mat || !('opacity' in mat)) return
-        mat.transparent = true
-        mat.opacity = hide ? 0.08 : 0.96
-        mat.depthWrite = !hide
-      })
+      const roofGroup = this.roofs.get(room.id)
+      if (roofGroup) {
+        roofGroup.traverse((obj) => {
+          if (!(obj instanceof THREE.Mesh)) return
+          const mat = obj.material as THREE.MeshStandardMaterial
+          if (!mat || !('opacity' in mat)) return
+          mat.transparent = true
+          mat.opacity = hide ? 0.08 : 0.96
+          mat.depthWrite = !hide
+        })
+      }
+      const wallGroup = this.roomWalls.get(room.id)
+      if (wallGroup) {
+        // Sink walls down (เว้าหลบ) + fade so they don't bury the avatar
+        const target = hide ? 1 : 0
+        const cur = (wallGroup.userData.hide as number) ?? 0
+        const next = cur + (target - cur) * (1 - Math.exp(-10 * dt))
+        wallGroup.userData.hide = next < 0.001 ? 0 : next
+        wallGroup.scale.y = 1 - wallGroup.userData.hide * 0.88
+        wallGroup.position.y = -wallGroup.userData.hide * (ROOM_WALL_H * 0.42)
+        wallGroup.traverse((obj) => {
+          if (!(obj instanceof THREE.Mesh)) return
+          const mat = obj.material as THREE.MeshStandardMaterial
+          if (!mat || !('opacity' in mat)) return
+          mat.transparent = true
+          mat.opacity = 0.96 - wallGroup.userData.hide * 0.88
+          mat.depthWrite = wallGroup.userData.hide < 0.35
+          obj.castShadow = wallGroup.userData.hide < 0.45
+        })
+      }
     }
 
     // Near south (bottom) edge: fade south skyline so camera/character aren't buried in towers
@@ -855,7 +921,7 @@ export class CampusScene {
 
     // Place camera at a rigid offset from the player every frame.
     // Bird flap / water-hover / jump bob stay on the avatar mesh — do not pump the lens.
-    const desiredFocusY = this.playerIsBird ? y : y + this.player.airHeight()
+    const desiredFocusY = this.playerCanFly ? y : y + this.player.airHeight()
     if (!this.camFocusReady) {
       this.camFocusY = desiredFocusY
       this.camFocusReady = true
@@ -877,6 +943,7 @@ export class CampusScene {
     this.player.dispose()
     for (const a of this.peers.values()) a.dispose()
     this.roofs.clear()
+    this.roomWalls.clear()
     this.fishingLine?.geometry.dispose()
     ;(this.fishingLine?.material as THREE.Material | undefined)?.dispose()
     this.fishingBobber?.geometry.dispose()

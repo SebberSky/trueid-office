@@ -106,6 +106,7 @@ export function makePresence(
   voiceOn: boolean,
   sharing: boolean,
   jumpAt?: number,
+  fireAt?: number,
 ): PeerPresence {
   return {
     id,
@@ -118,6 +119,7 @@ export function makePresence(
     voiceOn,
     sharing,
     jumpAt,
+    fireAt,
     updatedAt: Date.now(),
   }
 }
