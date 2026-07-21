@@ -55,12 +55,15 @@ export default defineConfig({
       'agent3s-imac.tail91abbd.ts.net'
     ],
     proxy: {
+      // Prefer http target + ws:true — more reliable than ws:// with Vite HTTPS.
       '/ws': {
-        target: 'ws://localhost:3001',
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
         ws: true,
       },
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
       },
     },
   },
@@ -70,11 +73,13 @@ export default defineConfig({
     allowedHosts: true,
     proxy: {
       '/ws': {
-        target: 'ws://localhost:3001',
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
         ws: true,
       },
       '/api': {
-        target: 'http://localhost:3001',
+        target: 'http://127.0.0.1:3001',
+        changeOrigin: true,
       },
     },
   },
