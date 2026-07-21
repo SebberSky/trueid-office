@@ -33,7 +33,6 @@ import {
 import {
   FALLGUYS_ROOM_ID,
   type FallGuysActiveRace,
-  type FallGuysLobbyState,
   type FallGuysRacer,
 } from '../fallguys/types'
 import {
@@ -42,7 +41,6 @@ import {
   emptyBoard,
   type XoActiveGame,
   type XoCell,
-  type XoLobbyState,
   type XoPlayer,
 } from '../xo/types'
 import './World.css'
@@ -122,7 +120,6 @@ export function WorldView() {
   const [fishCatch, setFishCatch] = useState<FishingCatch | null>(null)
   const [nearWater, setNearWater] = useState(false)
   const [fishingActive, setFishingActive] = useState(false)
-  const [fgLobby, setFgLobby] = useState<FallGuysLobbyState>({ hostId: null, inZone: [] })
   /** none | player (locked in zone) | spectator (overlay, no play) */
   const [fgRole, setFgRole] = useState<'none' | 'player' | 'spectator'>('none')
   const [fgRaceId, setFgRaceId] = useState(0)
@@ -142,7 +139,6 @@ export function WorldView() {
   /** Race id the user closed overlay for — don't auto-reopen until a new race. */
   const fgDismissedRaceRef = useRef(0)
 
-  const [xoLobby, setXoLobby] = useState<XoLobbyState>({ hostId: null, inZone: [] })
   const [xoRole, setXoRole] = useState<'none' | 'player'>('none')
   const [xoGameId, setXoGameId] = useState(0)
   const [xoPlayers, setXoPlayers] = useState<XoPlayer[]>([])
@@ -388,9 +384,7 @@ export function WorldView() {
           if (p?.roomId) pins.set(p.roomId, p)
         }
         setPinsByRoom(pins)
-        if (msg.fallguys) setFgLobby(msg.fallguys)
         if (msg.fallguysRace) applyFgRaceStateRef.current(msg.fallguysRace)
-        if (msg.xo) setXoLobby(msg.xo)
         if (msg.xoGame) applyXoGameStateRef.current(msg.xoGame)
         if (msg.lastPose && !poseAppliedRef.current) {
           const tx = Math.floor(msg.lastPose.x / TILE)
@@ -409,7 +403,6 @@ export function WorldView() {
         return
       }
       if (msg.type === 'fallguys-lobby') {
-        setFgLobby(msg.lobby)
         return
       }
       if (msg.type === 'fallguys-race-start') {
@@ -431,7 +424,6 @@ export function WorldView() {
         return
       }
       if (msg.type === 'xo-lobby') {
-        setXoLobby(msg.lobby)
         return
       }
       if (msg.type === 'xo-game-start') {
@@ -1199,7 +1191,7 @@ export function WorldView() {
 
   const canUseNameWheel = roomPeople.length > 3
 
-  // Live zone occupancy from presence (server lobby hostId still authoritative)
+  // Live zone occupancy from presence (matches who is standing on the pad)
   const fgZoneCount =
     peersLive.filter((p) => p.roomId === FALLGUYS_ROOM_ID).length +
     (roomId === FALLGUYS_ROOM_ID ? 1 : 0)
@@ -1298,16 +1290,13 @@ export function WorldView() {
         {roomId === FALLGUYS_ROOM_ID && fgRole === 'none' && fgRacePhase !== 'racing' && (
           <div className="world__fg-lobby">
             <strong>Fall Guys Arena</strong>
-            <p>
-              ในโซน {fgZoneCount} คน
-              {fgLobby.hostId === session.id ? ' · คุณเป็นโฮสต์' : ''}
-            </p>
+            <p>ในโซน {fgZoneCount} คน</p>
             <button
               type="button"
-              disabled={fgLobby.hostId !== session.id || fgZoneCount < 1}
+              disabled={fgZoneCount < 1}
               onClick={() => netRef.current?.send({ type: 'fallguys-start' })}
             >
-              {fgLobby.hostId === session.id ? 'เริ่มเกม' : 'รอโฮสต์เริ่ม…'}
+              {fgZoneCount < 1 ? 'รอผู้เล่น…' : 'เริ่มเกม'}
             </button>
           </div>
         )}
@@ -1320,20 +1309,13 @@ export function WorldView() {
         {roomId === XO_ROOM_ID && xoRole === 'none' && xoPhase !== 'playing' && (
           <div className="world__fg-lobby">
             <strong>{XO_ROOM_NAME}</strong>
-            <p>
-              ในโซน {xoZoneCount}/2 คน
-              {xoLobby.hostId === session.id ? ' · คุณเป็นโฮสต์' : ''}
-            </p>
+            <p>ในโซน {xoZoneCount}/2 คน</p>
             <button
               type="button"
-              disabled={xoLobby.hostId !== session.id || xoZoneCount !== 2}
+              disabled={xoZoneCount !== 2}
               onClick={() => netRef.current?.send({ type: 'xo-start' })}
             >
-              {xoZoneCount !== 2
-                ? 'รอผู้เล่น 2 คน'
-                : xoLobby.hostId === session.id
-                  ? 'เริ่มเกม'
-                  : 'รอโฮสต์เริ่ม…'}
+              {xoZoneCount !== 2 ? 'รอผู้เล่น 2 คน' : 'เริ่มเกม'}
             </button>
           </div>
         )}
@@ -1347,7 +1329,6 @@ export function WorldView() {
             phase={xoPhase === 'results' ? 'results' : 'playing'}
             winnerId={xoWinnerId}
             reason={xoReason}
-            isHost={xoLobby.hostId === session.id}
             onMove={(cell) =>
               netRef.current?.send({ type: 'xo-move', gameId: xoGameId, cell })
             }
@@ -1370,7 +1351,6 @@ export function WorldView() {
             players={fgPlayers}
             scores={fgScores}
             raceOver={fgRaceOver}
-            isHost={fgLobby.hostId === session.id}
             spectating={fgRole === 'spectator'}
             onProgress={(progress, finished) => {
               if (fgRoleRef.current !== 'player') return

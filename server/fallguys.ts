@@ -53,7 +53,8 @@ function recomputeHost(deps: Deps) {
   let best: Client | null = null
   let bestT = Infinity
   for (const c of zone) {
-    const t = arenaJoinedAt.get(c.id!) ?? Date.now()
+    if (!arenaJoinedAt.has(c.id!)) arenaJoinedAt.set(c.id!, Date.now())
+    const t = arenaJoinedAt.get(c.id!)!
     if (t < bestT) {
       bestT = t
       best = c
@@ -64,9 +65,12 @@ function recomputeHost(deps: Deps) {
 
 function lobbySnapshot(deps: Deps): FallGuysLobbyState {
   recomputeHost(deps)
+  const zone = [...inArena(deps)].sort(
+    (a, b) => (arenaJoinedAt.get(a.id!) ?? 0) - (arenaJoinedAt.get(b.id!) ?? 0),
+  )
   return {
     hostId,
-    inZone: inArena(deps).map((c) => ({ id: c.id!, name: nameOf(c) })),
+    inZone: zone.map((c) => ({ id: c.id!, name: nameOf(c) })),
   }
 }
 
@@ -107,14 +111,15 @@ function maybeFinishRace(deps: Deps) {
 
 function startRace(deps: Deps, requesterId: string) {
   if (phase === 'racing') return
-  recomputeHost(deps)
-  if (hostId !== requesterId) {
-    const c = [...deps.clients].find((x) => x.id === requesterId)
-    if (c) deps.send(c.ws, { type: 'error', message: 'only host can start Fall Guys' })
-    return
-  }
   const zone = inArena(deps)
   if (zone.length === 0) return
+  if (!zone.some((c) => c.id === requesterId)) {
+    const c = [...deps.clients].find((x) => x.id === requesterId)
+    if (c) deps.send(c.ws, { type: 'error', message: 'must be in Fall Guys zone to start' })
+    return
+  }
+  // Anyone currently in the arena may start.
+  recomputeHost(deps)
   raceId += 1
   startedAt = Date.now()
   phase = 'racing'
