@@ -162,7 +162,11 @@ function startGame(deps: Deps, requesterId: string) {
   gameId += 1
   startedAt = Date.now()
   phase = 'playing'
-  deps.broadcast({ type: 'xo-game-start', game: gameStartPayload() })
+  const startMsg = { type: 'xo-game-start' as const, game: gameStartPayload() }
+  deps.broadcast(startMsg)
+  // Ensure the starter always gets the frame even if broadcast iteration skips them.
+  const starter = [...deps.clients].find((x) => x.id === requesterId)
+  if (starter) deps.send(starter.ws, startMsg)
 }
 
 function forfeitIfNeeded(deps: Deps, leftId: string) {
@@ -217,6 +221,15 @@ export function handleXoMsg(
   if (msg.type === 'xo-start' || msg.type === 'xo-restart') {
     const claimed = Array.isArray(msg.zoneIds) ? msg.zoneIds.map(String) : []
     const ids = [...new Set([client.id, ...claimed])].slice(0, 2)
+    console.info('[xo] start request', {
+      requesterId: client.id,
+      claimed: ids,
+      phase,
+      boothBefore: inBooth(deps).map((c) => ({
+        id: c.id,
+        roomId: c.peer?.roomId ?? null,
+      })),
+    })
     ensureInBooth(deps, ids)
     // Re-run presence hooks so boothJoinedAt matches forced roomIds.
     for (const id of ids) {
@@ -224,6 +237,12 @@ export function handleXoMsg(
       if (c) onXoPresence(deps, c)
     }
     startGame(deps, client.id)
+    console.info('[xo] start done', {
+      phase,
+      zoneAfter: inBooth(deps).map((c) => c.id),
+      gameId,
+      players: players.map((p) => p.id),
+    })
     return
   }
 
@@ -274,4 +293,20 @@ export function xoWelcomeLobby(deps: Deps): XoLobbyState {
 
 export function xoWelcomeGame(): XoActiveGame | null {
   return activeSnapshot()
+}
+
+/** Runtime snapshot for /api/health debugging. */
+export function xoDebugState(deps: Deps) {
+  return {
+    phase,
+    gameId,
+    hostId,
+    zone: inBooth(deps).map((c) => ({
+      id: c.id,
+      name: nameOf(c),
+      roomId: c.peer?.roomId ?? null,
+    })),
+    boothJoinedAt: [...boothJoinedAt.entries()],
+    players: players.map((p) => ({ id: p.id, mark: p.mark })),
+  }
 }

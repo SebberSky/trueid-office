@@ -379,6 +379,7 @@ export function WorldView() {
         return
       }
       if (msg.type === 'error') {
+        console.warn('[net] error', msg.message)
         setMediaError(msg.message)
         setLobbyError(msg.message)
         return
@@ -433,7 +434,17 @@ export function WorldView() {
       if (msg.type === 'xo-lobby') {
         return
       }
+      if (msg.type === 'xo-ack') {
+        console.info('[xo] recv xo-ack', msg)
+        setLobbyError(
+          msg.ok
+            ? `server ack · zone ${msg.zone} · ${msg.detail ?? msg.phase}`
+            : (msg.detail ?? 'xo-ack failed'),
+        )
+        return
+      }
       if (msg.type === 'xo-game-start') {
+        console.info('[xo] recv xo-game-start', msg.game)
         setLobbyError(null)
         applyXoGameStartRef.current(msg.game)
         return
@@ -1342,8 +1353,15 @@ export function WorldView() {
                 setLobbyError(null)
                 publishRef.current()
                 const zoneIds = [...new Set(xoZoneIds)].slice(0, 2)
+                console.info('[xo] start click', {
+                  zoneIds,
+                  xoZoneCount,
+                  roomId,
+                  hasNet: !!netRef.current,
+                })
                 window.setTimeout(() => {
                   netRef.current?.send({ type: 'xo-start', zoneIds })
+                  console.info('[xo] sent xo-start', { zoneIds })
                 }, 80)
               }}
             >
