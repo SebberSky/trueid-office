@@ -36,7 +36,6 @@ export class CampusScene {
   private playerCanFly = false
   private peers = new Map<string, Character3D>()
   private peerMotion = new Map<string, PeerMotion>()
-  private waterMeshes: THREE.Mesh[] = []
   private waterMat: THREE.MeshBasicMaterial | null = null
   private roofs = new Map<string, THREE.Group>()
   /** Wall + trim + door frame shells — sink / fade when local player is inside. */
@@ -63,6 +62,7 @@ export class CampusScene {
   private readonly headNdc = new THREE.Vector3()
   private fishingGroup = new THREE.Group()
   private fishingBobber: THREE.Group | null = null
+  private fishingRod: THREE.Group | null = null
   private fishingLine: THREE.Line | null = null
   private fishingRipples: THREE.Mesh[] = []
   private fishingActive = false
@@ -74,6 +74,9 @@ export class CampusScene {
   private readonly fishHand = new THREE.Vector3()
   private readonly fishBob = new THREE.Vector3()
   private readonly fishMid = new THREE.Vector3()
+  private readonly fishTip = new THREE.Vector3()
+  private readonly fishRodDir = new THREE.Vector3()
+  private readonly fishUp = new THREE.Vector3(0, 1, 0)
   private playerLabelName = ''
 
   constructor(canvas: HTMLCanvasElement, map: WorldMap, look: CharacterLook) {
@@ -131,10 +134,12 @@ export class CampusScene {
     this.scene.add(this.player.root)
 
     this.fishingGroup.visible = false
+    this.fishingRod = makeFishingRod()
+    this.fishingGroup.add(this.fishingRod)
     this.fishingBobber = makeFishingBobber()
     this.fishingGroup.add(this.fishingBobber)
 
-    // Sagging line (hand → mid → bobber)
+    // Sagging line (rod tip → mid → bobber)
     const lineGeo = new THREE.BufferGeometry().setFromPoints([
       new THREE.Vector3(),
       new THREE.Vector3(),
@@ -236,29 +241,6 @@ export class CampusScene {
           mesh.receiveShadow = false
           mesh.castShadow = false
           ground.add(mesh)
-          this.waterMeshes.push(mesh)
-
-          const shore =
-            tileAt(map, tx - 1, ty) !== 'water' ||
-            tileAt(map, tx + 1, ty) !== 'water' ||
-            tileAt(map, tx, ty - 1) !== 'water' ||
-            tileAt(map, tx, ty + 1) !== 'water'
-          if (shore) {
-            const foam = new THREE.Mesh(
-              new THREE.PlaneGeometry(T * 0.92, T * 0.92),
-              new THREE.MeshBasicMaterial({
-                color: 0xe8f7ff,
-                transparent: true,
-                opacity: 0.4,
-                depthWrite: false,
-                toneMapped: false,
-                fog: false,
-              }),
-            )
-            foam.rotation.x = -Math.PI / 2
-            foam.position.set(tx + 0.5, 0.06, ty + 0.5)
-            ground.add(foam)
-          }
           continue
         }
 
@@ -877,7 +859,7 @@ export class CampusScene {
   }
 
   private updateFishingVisual(dt: number) {
-    if (!this.fishingActive || !this.fishingBobber || !this.fishingLine) return
+    if (!this.fishingActive || !this.fishingBobber || !this.fishingLine || !this.fishingRod) return
     this.fishingClock += dt
     this.fishingCastT = Math.min(1, this.fishingCastT + dt / 0.55)
 
@@ -892,7 +874,7 @@ export class CampusScene {
     const nz = toZ / toLen
 
     const hand = this.fishHand
-    hand.set(root.x + nx * 0.42, root.y + 1.05, root.z + nz * 0.42)
+    hand.set(root.x + nx * 0.38, root.y + 0.95, root.z + nz * 0.38)
 
     const waterY = 0.06
     const cast = this.fishingCastT
@@ -930,14 +912,25 @@ export class CampusScene {
     this.fishingBobber.scale.setScalar(landed ? 1.15 : 0.85 + ease * 0.3)
     this.fishingBobber.frustumCulled = false
 
-    // Line sag
+    // Aim rod tip toward the cast (lift higher mid-swing)
+    const tipLift = landed ? 0.55 : 0.35 + Math.sin(ease * Math.PI) * 1.1
+    this.fishRodDir
+      .set(this.fishBob.x - hand.x, this.fishBob.y + tipLift - hand.y, this.fishBob.z - hand.z)
+      .normalize()
+    if (this.fishRodDir.lengthSq() < 1e-6) this.fishRodDir.copy(this.fishUp)
+    this.fishingRod.position.copy(hand)
+    this.fishingRod.quaternion.setFromUnitVectors(this.fishUp, this.fishRodDir)
+    // Local tip sits at y≈1.72 along the rod shaft
+    this.fishTip.set(0, 1.72, 0).applyQuaternion(this.fishingRod.quaternion).add(hand)
+
+    // Line sag from tip → bobber
     this.fishMid.set(
-      (hand.x + this.fishBob.x) * 0.5,
-      Math.min(hand.y, this.fishBob.y) - 0.25 - (1 - ease) * 0.1,
-      (hand.z + this.fishBob.z) * 0.5,
+      (this.fishTip.x + this.fishBob.x) * 0.5,
+      Math.min(this.fishTip.y, this.fishBob.y) - 0.22 - (1 - ease) * 0.1,
+      (this.fishTip.z + this.fishBob.z) * 0.5,
     )
     const positions = this.fishingLine.geometry.attributes.position as THREE.BufferAttribute
-    positions.setXYZ(0, hand.x, hand.y, hand.z)
+    positions.setXYZ(0, this.fishTip.x, this.fishTip.y, this.fishTip.z)
     positions.setXYZ(1, this.fishMid.x, this.fishMid.y, this.fishMid.z)
     positions.setXYZ(2, this.fishBob.x, this.fishBob.y + 0.04, this.fishBob.z)
     positions.needsUpdate = true
@@ -1047,9 +1040,6 @@ export class CampusScene {
   ) {
     this.clock += dt
     this.lastLocalPos = { x: px, y: py, facing }
-    for (const w of this.waterMeshes) {
-      w.position.y = -0.06 + Math.sin(this.clock * 1.6 + w.position.x * 1.3 + w.position.z) * 0.015
-    }
 
     const { x, z } = toWorldXZ(px, py)
     const y = surfaceY(map, px, py)
@@ -1169,6 +1159,13 @@ export class CampusScene {
       if (Array.isArray(m)) m.forEach((x) => x.dispose())
       else m.dispose()
     })
+    this.fishingRod?.traverse((obj) => {
+      if (!(obj instanceof THREE.Mesh)) return
+      obj.geometry.dispose()
+      const m = obj.material
+      if (Array.isArray(m)) m.forEach((x) => x.dispose())
+      else m.dispose()
+    })
     for (const ring of this.fishingRipples) {
       ring.geometry.dispose()
       ;(ring.material as THREE.Material).dispose()
@@ -1199,24 +1196,71 @@ function makeFishingBobber() {
     new THREE.SphereGeometry(0.09, 10, 8),
     new THREE.MeshStandardMaterial({
       color: 0xef4444,
-      roughness: 0.35,
-      emissive: 0xdc2626,
-      emissiveIntensity: 0.35,
+      roughness: 0.4,
+      emissive: 0xb91c1c,
+      emissiveIntensity: 0.2,
     }),
   )
-  tip.position.y = 0.14
+  tip.position.y = 0.16
   tip.castShadow = true
   g.add(tip)
   const stem = new THREE.Mesh(
     new THREE.CylinderGeometry(0.02, 0.02, 0.12, 6),
-    new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.7 }),
+    new THREE.MeshStandardMaterial({ color: 0x334155, roughness: 0.5 }),
   )
-  stem.position.y = 0.26
+  stem.position.y = -0.14
   g.add(stem)
-  g.frustumCulled = false
-  g.traverse((o) => {
-    o.frustumCulled = false
+  return g
+}
+
+/** Simple fishing rod — local +Y is tip direction; tip at y≈1.72. */
+function makeFishingRod() {
+  const g = new THREE.Group()
+  const wood = new THREE.MeshStandardMaterial({
+    color: 0xb8956a,
+    roughness: 0.55,
+    metalness: 0.08,
   })
+  const gripMat = new THREE.MeshStandardMaterial({
+    color: 0x4a3426,
+    roughness: 0.85,
+  })
+  const metal = new THREE.MeshStandardMaterial({
+    color: 0x94a3b8,
+    roughness: 0.35,
+    metalness: 0.55,
+  })
+
+  const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.05, 0.38, 8), gripMat)
+  grip.position.y = 0.16
+  grip.castShadow = true
+  g.add(grip)
+
+  const butt = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.04, 0.1, 8), metal)
+  butt.position.y = -0.05
+  g.add(butt)
+
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.016, 0.032, 1.2, 8), wood)
+  shaft.position.y = 0.92
+  shaft.castShadow = true
+  g.add(shaft)
+
+  const tip = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.014, 0.42, 6), wood)
+  tip.position.y = 1.7
+  tip.castShadow = true
+  g.add(tip)
+
+  const reel = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.07, 0.055, 12), metal)
+  reel.rotation.z = Math.PI / 2
+  reel.position.set(0.08, 0.32, 0)
+  reel.castShadow = true
+  g.add(reel)
+
+  const spool = new THREE.Mesh(new THREE.CylinderGeometry(0.035, 0.035, 0.07, 10), metal)
+  spool.rotation.z = Math.PI / 2
+  spool.position.set(0.08, 0.32, 0)
+  g.add(spool)
+
   return g
 }
 
