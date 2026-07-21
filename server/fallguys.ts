@@ -44,6 +44,17 @@ function inArena(deps: Deps): Client[] {
   )
 }
 
+function ensureInArena(deps: Deps, ids: string[]) {
+  for (const id of ids) {
+    const c = [...deps.clients].find((x) => x.id === id && x.ws.readyState === 1)
+    if (!c?.peer) continue
+    if (c.peer.roomId !== FALLGUYS_ROOM_ID) {
+      c.peer = { ...c.peer, roomId: FALLGUYS_ROOM_ID, updatedAt: Date.now() }
+    }
+    if (!arenaJoinedAt.has(id)) arenaJoinedAt.set(id, Date.now())
+  }
+}
+
 function recomputeHost(deps: Deps) {
   const zone = inArena(deps)
   if (zone.length === 0) {
@@ -109,16 +120,22 @@ function maybeFinishRace(deps: Deps) {
   if ([...racers.values()].every((r) => r.finishedAt != null)) endRace(deps)
 }
 
+function sendFgError(deps: Deps, requesterId: string, message: string) {
+  const c = [...deps.clients].find((x) => x.id === requesterId)
+  if (c) deps.send(c.ws, { type: 'error', message })
+}
+
 function startRace(deps: Deps, requesterId: string) {
-  if (phase === 'racing') return
   const zone = inArena(deps)
-  if (zone.length === 0) return
-  if (!zone.some((c) => c.id === requesterId)) {
-    const c = [...deps.clients].find((x) => x.id === requesterId)
-    if (c) deps.send(c.ws, { type: 'error', message: 'must be in Fall Guys zone to start' })
+  if (zone.length === 0) {
+    sendFgError(deps, requesterId, 'Fall Guys ต้องมีผู้เล่นในโซนอย่างน้อย 1 คน')
     return
   }
-  // Anyone currently in the arena may start.
+  if (!zone.some((c) => c.id === requesterId)) {
+    sendFgError(deps, requesterId, 'ต้องยืนในโซน Fall Guys ถึงจะเริ่มได้')
+    return
+  }
+  // Anyone in the arena may start (also rematch if a race was stuck in racing).
   recomputeHost(deps)
   raceId += 1
   startedAt = Date.now()
@@ -190,21 +207,33 @@ export function handleFallGuysMsg(
   deps: Deps,
   client: Client,
   msg:
-    | { type: 'fallguys-start' }
-    | { type: 'fallguys-restart' }
+    | { type: 'fallguys-start'; zoneIds?: string[] }
+    | { type: 'fallguys-restart'; zoneIds?: string[] }
     | { type: 'fallguys-quit' }
     | { type: 'fallguys-progress'; raceId: number; progress: number; finished: boolean },
 ) {
-  if (!client.id) return
+  if (!client.id) {
+    deps.send(client.ws, { type: 'error', message: 'ยังไม่พร้อม — รอเชื่อมต่อแล้วกดเริ่มอีกครั้ง' })
+    return
+  }
 
   if (msg.type === 'fallguys-start' || msg.type === 'fallguys-restart') {
-    if (msg.type === 'fallguys-restart' && phase !== 'results' && phase !== 'lobby') return
+    const claimed = Array.isArray(msg.zoneIds) ? msg.zoneIds.map(String) : []
+    const ids = [...new Set([client.id, ...claimed])]
+    ensureInArena(deps, ids)
+    for (const id of ids) {
+      const c = [...deps.clients].find((x) => x.id === id)
+      if (c) onFallGuysPresence(deps, c)
+    }
     startRace(deps, client.id)
     return
   }
 
   if (msg.type === 'fallguys-quit') {
-    // Client closes local UI only — race/results state stays for others.
+    if (phase === 'results') {
+      phase = 'lobby'
+      publishLobby(deps)
+    }
     return
   }
 
