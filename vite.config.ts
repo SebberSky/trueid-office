@@ -49,11 +49,9 @@ export default defineConfig({
     },
   },
   server: {
-    host: true, 
-    allowedHosts: [
-      'agent3s-imac-1.tail91abbd.ts.net',
-      'agent3s-imac.tail91abbd.ts.net'
-    ],
+    host: true,
+    // Funnel / MagicDNS hostnames change with the tailnet — allow all in dev.
+    allowedHosts: true,
     proxy: {
       // Prefer http target + ws:true — more reliable than ws:// with Vite HTTPS.
       '/ws': {

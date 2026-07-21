@@ -13,6 +13,8 @@ module.exports = {
       min_uptime: '5s',
       env: {
         NODE_ENV: 'development',
+        // Funnel terminates HTTPS on :8443 and proxies HTTP to local Vite.
+        VITE_DEV_HTTPS: '0',
       },
     },
   ],
