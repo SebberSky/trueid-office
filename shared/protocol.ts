@@ -82,6 +82,8 @@ export type ServerMsg =
   | { type: 'xo-game-update'; update: XoGameUpdate }
   | { type: 'xo-game-over'; result: XoGameOver }
   | { type: 'xo-game-state'; state: XoActiveGame }
+  /** Immediate reply to xo-start / xo-restart so clients can detect a silent server. */
+  | { type: 'xo-ack'; ok: boolean; phase: string; zone: number; detail?: string }
   /** Another device logged in with the same email — this socket must stop. */
   | { type: 'session-replaced'; reason?: string }
   | { type: 'error'; message: string }

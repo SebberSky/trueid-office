@@ -16,11 +16,14 @@ import {
   handleXoMsg,
   onXoLeave,
   onXoPresence,
+  xoDebugState,
   xoWelcomeGame,
   xoWelcomeLobby,
 } from './xo'
 
 const PORT = Number(process.env.PORT || 3001)
+/** Bump when diagnosing deploy/stale-process issues. */
+const BUILD_TAG = 'xo-ack-20260721'
 const STALE_MS = 5000
 const PIN_TEXT_MAX = 280
 /** Debounce disk writes while walking. */
@@ -44,7 +47,11 @@ const pinnedByRoom = new Map<string, PinnedMessage>()
 const UNLOCKABLE = new Set(['plaza-main', 'fallguys-arena', 'xo-booth'])
 
 function send(ws: WebSocket, msg: ServerMsg) {
-  if (ws.readyState === 1) ws.send(JSON.stringify(msg))
+  if (ws.readyState === 1) {
+    ws.send(JSON.stringify(msg))
+    return
+  }
+  console.warn('[ws] send skipped readyState=', ws.readyState, 'type=', msg.type)
 }
 
 function broadcast(msg: ServerMsg, except?: WebSocket) {
@@ -165,7 +172,15 @@ const server = http.createServer(async (req, res) => {
 
   if (req.method === 'GET' && url.pathname === '/api/health') {
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ ok: true, peers: livePeers().length }))
+    res.end(
+      JSON.stringify({
+        ok: true,
+        build: BUILD_TAG,
+        peers: livePeers().length,
+        clients: clients.size,
+        xo: xoDebugState({ clients, send, broadcast }),
+      }),
+    )
     return
   }
 
@@ -283,7 +298,30 @@ wss.on('connection', (ws) => {
       msg.type === 'xo-quit' ||
       msg.type === 'xo-move'
     ) {
-      handleXoMsg({ clients, send, broadcast }, client, msg)
+      try {
+        if (msg.type === 'xo-start' || msg.type === 'xo-restart') {
+          // Always ack first so Network WS never looks like a black hole.
+          const zone = [...clients].filter(
+            (c) => c.id && c.peer?.roomId === 'xo-booth' && c.ws.readyState === 1,
+          ).length
+          send(ws, {
+            type: 'xo-ack',
+            ok: true,
+            phase: 'received',
+            zone,
+            detail: `id=${client.id ?? 'null'} build=${BUILD_TAG}`,
+          })
+          console.info('[xo] inbound', msg.type, {
+            id: client.id,
+            zoneIds: 'zoneIds' in msg ? msg.zoneIds : undefined,
+            build: BUILD_TAG,
+          })
+        }
+        handleXoMsg({ clients, send, broadcast }, client, msg)
+      } catch (err) {
+        console.error('[xo] handler threw', err)
+        send(ws, { type: 'error', message: `XO handler error: ${String(err)}` })
+      }
       return
     }
 
