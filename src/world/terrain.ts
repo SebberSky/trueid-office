@@ -61,7 +61,7 @@ export const TERRAIN_COLOR: Record<TerrainType, string> = {
   path: '#c4b59a',
   floor: '#e8dfd0',
   sand: '#d4c48a',
-  water: '#3a8fc4',
+  water: '#2f8fc4',
   rock: '#6b6f76',
   wall: '#3d4450',
   desk: '#8b6914',
