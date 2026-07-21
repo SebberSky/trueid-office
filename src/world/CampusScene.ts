@@ -912,21 +912,22 @@ export class CampusScene {
     this.fishingBobber.scale.setScalar(landed ? 1.15 : 0.85 + ease * 0.3)
     this.fishingBobber.frustumCulled = false
 
-    // Aim rod tip toward the cast (lift higher mid-swing)
-    const tipLift = landed ? 0.55 : 0.35 + Math.sin(ease * Math.PI) * 1.1
-    this.fishRodDir
-      .set(this.fishBob.x - hand.x, this.fishBob.y + tipLift - hand.y, this.fishBob.z - hand.z)
-      .normalize()
-    if (this.fishRodDir.lengthSq() < 1e-6) this.fishRodDir.copy(this.fishUp)
+    // Hold rod upright toward the pond at ~60° from horizontal (never dunk tip in water).
+    // Mid-cast: briefly lift higher, then settle back to 60°.
+    const elevDeg = landed ? 60 : 60 + Math.sin(ease * Math.PI) * 25
+    const elev = (elevDeg * Math.PI) / 180
+    const cosE = Math.cos(elev)
+    const sinE = Math.sin(elev)
+    this.fishRodDir.set(nx * cosE, sinE, nz * cosE).normalize()
     this.fishingRod.position.copy(hand)
     this.fishingRod.quaternion.setFromUnitVectors(this.fishUp, this.fishRodDir)
-    // Local tip sits at y≈1.72 along the rod shaft
+    // Local tip sits at y≈1.72 along the rod shaft — stays in the air
     this.fishTip.set(0, 1.72, 0).applyQuaternion(this.fishingRod.quaternion).add(hand)
 
-    // Line sag from tip → bobber
+    // Line sag from elevated tip down to bobber on the water
     this.fishMid.set(
       (this.fishTip.x + this.fishBob.x) * 0.5,
-      Math.min(this.fishTip.y, this.fishBob.y) - 0.22 - (1 - ease) * 0.1,
+      Math.min(this.fishTip.y, this.fishBob.y) - 0.35 - (1 - ease) * 0.15,
       (this.fishTip.z + this.fishBob.z) * 0.5,
     )
     const positions = this.fishingLine.geometry.attributes.position as THREE.BufferAttribute
