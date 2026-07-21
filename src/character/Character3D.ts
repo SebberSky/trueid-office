@@ -68,6 +68,8 @@ export class Character3D {
   private wingR: THREE.Object3D | null = null
   private segments: THREE.Object3D[] = []
   private restY = 0
+  private fireT = 0
+  private fireGroup: THREE.Group | null = null
 
   constructor(look: CharacterLook) {
     this.root.add(this.body)
@@ -476,6 +478,32 @@ export class Character3D {
     this.jumpVel = this.jumpSpeed
   }
 
+  /** Dragon-only fire breath cone in front of the mouth. */
+  triggerFireBreath() {
+    if (this.animalKind !== 'dragon') return
+    if (this.fireT > 0.05) return
+    this.fireT = 0.85
+    if (!this.fireGroup) {
+      this.fireGroup = new THREE.Group()
+      this.body.add(this.fireGroup)
+      const colors = [0xff6b00, 0xffcc33, 0xff3300]
+      for (let i = 0; i < 5; i++) {
+        const ball = new THREE.Mesh(
+          new THREE.SphereGeometry(0.14 + i * 0.04, 8, 6),
+          new THREE.MeshBasicMaterial({
+            color: colors[i % colors.length],
+            transparent: true,
+            opacity: 0.9,
+            depthWrite: false,
+          }),
+        )
+        ball.position.set(0, 0.55, 0.55 + i * 0.28)
+        this.fireGroup.add(ball)
+      }
+    }
+    this.fireGroup.visible = true
+  }
+
   airHeight() {
     return this.jumpY
   }
@@ -497,14 +525,17 @@ export class Character3D {
     overWater = false,
   ) {
     this.stepJump(dt)
+    this.stepFire(dt)
     this.root.position.set(px, py + this.jumpY, pz)
     const yaw =
       facing === 'down' ? 0 : facing === 'up' ? Math.PI : facing === 'left' ? -Math.PI / 2 : Math.PI / 2
     this.body.rotation.y = yaw
 
+    const canHoverFly = this.gait === 'bird' || this.gait === 'dragon'
     if (moving) {
-      this.animateWalk(dt)
-    } else if (this.gait === 'bird' && overWater) {
+      if (canHoverFly && overWater) this.animateFlight(dt)
+      else this.animateWalk(dt)
+    } else if (canHoverFly && overWater) {
       // Parked over water: keep hovering — never land/stand in the pond
       this.hoverInPlace(dt)
     } else {
@@ -522,11 +553,29 @@ export class Character3D {
     }
   }
 
+  private stepFire(dt: number) {
+    if (this.fireT <= 0 || !this.fireGroup) return
+    this.fireT -= dt
+    const life = Math.max(0, this.fireT / 0.85)
+    this.fireGroup.visible = life > 0
+    this.fireGroup.children.forEach((child, i) => {
+      const m = child as THREE.Mesh
+      const mat = m.material as THREE.MeshBasicMaterial
+      mat.opacity = 0.25 + life * 0.7
+      m.scale.setScalar(0.7 + (1 - life) * 0.8 + i * 0.05)
+      m.position.z = 0.55 + i * 0.28 + (1 - life) * 0.35
+    })
+    if (this.fireT <= 0) {
+      this.fireGroup.visible = false
+      this.fireT = 0
+    }
+  }
+
   /** Idle hover while floating above water. */
   private hoverInPlace(dt: number) {
     this.walkPhase += dt * 9
     const flap = Math.sin(this.walkPhase)
-    const cruise = 0.62
+    const cruise = this.gait === 'dragon' ? 0.85 : 0.62
     const targetY = this.restY + cruise + flap * 0.05
     this.body.position.y += (targetY - this.body.position.y) * Math.min(1, dt * 8)
     this.body.rotation.x += (-0.12 - this.body.rotation.x) * 0.15
@@ -538,7 +587,27 @@ export class Character3D {
       this.wingL.rotation.z = 0.15 + wing
       this.wingR.rotation.z = -0.15 - wing
     }
-    this.label.position.y = 1.85 + cruise
+    this.label.position.y = (this.gait === 'dragon' ? 2.35 : 1.85) + cruise
+  }
+
+  /** Shared air cruise used by birds and dragons over water. */
+  private animateFlight(dt: number) {
+    this.walkPhase += dt * (this.gait === 'dragon' ? 11 : 14)
+    const flap = Math.sin(this.walkPhase)
+    const cruise = this.gait === 'dragon' ? 0.85 : 0.62
+    this.body.position.y = this.restY + cruise + flap * 0.07
+    this.body.rotation.x = -0.18
+    this.body.rotation.z = Math.sin(this.walkPhase * 0.5) * 0.04
+    this.leftLeg.rotation.x = 1.05
+    this.rightLeg.rotation.x = 1.05
+    if (this.wingL && this.wingR) {
+      const wing = flap * 1.05
+      this.wingL.rotation.z = 0.2 + wing
+      this.wingR.rotation.z = -0.2 - wing
+      this.wingL.rotation.x = Math.max(0, flap) * 0.2
+      this.wingR.rotation.x = Math.max(0, flap) * 0.2
+    }
+    this.label.position.y = (this.gait === 'dragon' ? 2.35 : 1.85) + cruise
   }
 
   private animateWalk(dt: number) {
@@ -577,24 +646,7 @@ export class Character3D {
         break
       }
       case 'bird': {
-        // Cruise in the air with wing flaps — no hop/bounce on the ground
-        this.walkPhase += dt * 14
-        const flap = Math.sin(this.walkPhase)
-        const cruise = 0.62
-        this.body.position.y = this.restY + cruise + flap * 0.07
-        this.body.rotation.x = -0.18
-        this.body.rotation.z = Math.sin(this.walkPhase * 0.5) * 0.04
-        // Legs tucked for flight
-        this.leftLeg.rotation.x = 1.05
-        this.rightLeg.rotation.x = 1.05
-        if (this.wingL && this.wingR) {
-          const wing = flap * 1.05
-          this.wingL.rotation.z = 0.2 + wing
-          this.wingR.rotation.z = -0.2 - wing
-          this.wingL.rotation.x = Math.max(0, flap) * 0.2
-          this.wingR.rotation.x = Math.max(0, flap) * 0.2
-        }
-        this.label.position.y = 1.85 + cruise
+        this.animateFlight(dt)
         break
       }
       case 'worm': {
@@ -614,6 +666,7 @@ export class Character3D {
         break
       }
       case 'dragon': {
+        // Land walk / stomp — water flight is handled in setPose via animateFlight
         this.walkPhase += dt * 7
         const s = Math.sin(this.walkPhase) * 0.65
         this.leftArm.rotation.x = s
@@ -668,8 +721,9 @@ export class Character3D {
       this.wingR.rotation.z *= 0.85
       this.wingR.rotation.x *= 0.85
     }
-    if (this.gait === 'bird') {
-      this.label.position.y += (1.85 - this.label.position.y) * 0.2
+    if (this.gait === 'bird' || this.gait === 'dragon') {
+      const base = this.gait === 'dragon' ? 2.35 : 1.85
+      this.label.position.y += (base - this.label.position.y) * 0.2
     }
     this.headG.rotation.y *= 0.85
     for (const seg of this.segments) {

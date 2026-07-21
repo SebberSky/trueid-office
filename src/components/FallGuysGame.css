@@ -7,6 +7,26 @@
   background: #0f172a;
 }
 
+.fg__spectate-banner {
+  flex: 0 0 auto;
+  padding: 0.45rem 0.75rem;
+  text-align: center;
+  font-weight: 800;
+  font-size: 0.82rem;
+  letter-spacing: 0.02em;
+  color: #f3e8ff;
+  background: linear-gradient(90deg, #7c3aed, #db2777);
+}
+
+.fg__spectate-actions {
+  position: absolute;
+  left: 50%;
+  bottom: 1.25rem;
+  transform: translateX(-50%);
+  z-index: 3;
+  min-width: 160px;
+}
+
 .fg__stage {
   position: relative;
   flex: 1;

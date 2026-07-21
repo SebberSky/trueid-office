@@ -11,7 +11,7 @@ import { GlobalChatBus } from '../chat/GlobalChat'
 import { FLOAT_EMOJIS, RoomActivityBus, type Poll } from '../chat/RoomActivity'
 import type { ChatMessage, PinnedMessage } from '../chat/types'
 import type { Facing } from '../types'
-import { normalizeAnimalKind } from '../types'
+import { canFlyOverWater, normalizeAnimalKind } from '../types'
 import { ChatPanel } from './ChatPanel'
 import { PollPanel } from './PollPanel'
 import { FloatingEmojis, type FloatEmojiItem } from './FloatingEmojis'
@@ -27,6 +27,7 @@ import {
 } from '../fishing/loot'
 import {
   FALLGUYS_ROOM_ID,
+  type FallGuysActiveRace,
   type FallGuysLobbyState,
   type FallGuysRacer,
 } from '../fallguys/types'
@@ -69,6 +70,8 @@ export function WorldView() {
   const globalChatRef = useRef<GlobalChatBus | null>(null)
   const activityRef = useRef<RoomActivityBus | null>(null)
   const sceneRef = useRef<CampusScene | null>(null)
+  const lookRef = useRef(session.look)
+  lookRef.current = session.look
   const netRef = useRef<OfficeSocket | null>(null)
   const roomIdRef = useRef<string | null>(null)
   const lockedRoomsRef = useRef(new Set<string>())
@@ -90,18 +93,30 @@ export function WorldView() {
   const [nearWater, setNearWater] = useState(false)
   const [fishingActive, setFishingActive] = useState(false)
   const [fgLobby, setFgLobby] = useState<FallGuysLobbyState>({ hostId: null, inZone: [] })
-  const [fgPlaying, setFgPlaying] = useState(false)
+  /** none | player (locked in zone) | spectator (overlay, no play) */
+  const [fgRole, setFgRole] = useState<'none' | 'player' | 'spectator'>('none')
   const [fgRaceId, setFgRaceId] = useState(0)
   const [fgPlayers, setFgPlayers] = useState<{ id: string; name: string }[]>([])
   const [fgScores, setFgScores] = useState<FallGuysRacer[]>([])
   const [fgRaceOver, setFgRaceOver] = useState(false)
+  /** Live race snapshot known to this client (even if not in overlay yet). */
+  const [fgRacePhase, setFgRacePhase] = useState<'idle' | 'racing' | 'results'>('idle')
   const fgRaceIdRef = useRef(0)
   fgRaceIdRef.current = fgRaceId
+  const fgRoleRef = useRef(fgRole)
+  fgRoleRef.current = fgRole
+  const fgPlayersRef = useRef(fgPlayers)
+  fgPlayersRef.current = fgPlayers
+  const fgRacePhaseRef = useRef(fgRacePhase)
+  fgRacePhaseRef.current = fgRacePhase
+  /** Race id the user closed overlay for — don't auto-reopen until a new race. */
+  const fgDismissedRaceRef = useRef(0)
   const fishTimerRef = useRef<number | null>(null)
   const fishPhaseRef = useRef<'idle' | 'waiting' | 'catch'>('idle')
   const fishingActiveRef = useRef(false)
   const tryStartFishingRef = useRef(() => {})
   const stopFishingRef = useRef(() => {})
+  const toggleVoiceRef = useRef(() => {})
   const [screenFrom, setScreenFrom] = useState<string | null>(null)
   const [mediaError, setMediaError] = useState<string | null>(null)
   const [globalMsgs, setGlobalMsgs] = useState<ChatMessage[]>([])
@@ -119,6 +134,19 @@ export function WorldView() {
   useEffect(() => {
     roomIdRef.current = roomId
   }, [roomId])
+
+  // Enter pink pad during a live race → spectator overlay (unless already a racer)
+  useEffect(() => {
+    if (roomId === FALLGUYS_ROOM_ID && fgRacePhase === 'racing' && fgRaceId > 0) {
+      if (fgDismissedRaceRef.current === fgRaceId) return
+      const isPlayer = fgPlayers.some((p) => p.id === session.id)
+      setFgRole(isPlayer ? 'player' : 'spectator')
+      return
+    }
+    if (roomId !== FALLGUYS_ROOM_ID) {
+      setFgRole((prev) => (prev === 'spectator' ? 'none' : prev))
+    }
+  }, [roomId, fgRacePhase, fgRaceId, fgPlayers, session.id])
 
   useEffect(() => {
     lockedRoomsRef.current = lockedRooms
@@ -148,6 +176,7 @@ export function WorldView() {
   }, [])
 
   const jumpAtRef = useRef(0)
+  const fireAtRef = useRef(0)
 
   const publish = useCallback(() => {
     const bus = busRef.current
@@ -165,12 +194,61 @@ export function WorldView() {
         voiceOn,
         sharing,
         jumpAtRef.current || undefined,
+        fireAtRef.current || undefined,
       ),
     )
   }, [map, session, voiceOn, sharing])
 
   const publishRef = useRef(publish)
   publishRef.current = publish
+
+  const applyFgRaceStart = useCallback(
+    (race: { raceId: number; startedAt: number; players: { id: string; name: string }[] }) => {
+      setFgRaceId(race.raceId)
+      setFgPlayers(race.players)
+      setFgScores(
+        race.players.map((p) => ({
+          id: p.id,
+          name: p.name,
+          progress: 0,
+          finishedAt: null,
+        })),
+      )
+      setFgRaceOver(false)
+      setFgRacePhase('racing')
+      fgDismissedRaceRef.current = 0
+      if (race.players.some((p) => p.id === session.id)) {
+        setFgRole('player')
+      } else if (roomIdRef.current === FALLGUYS_ROOM_ID) {
+        setFgRole('spectator')
+      } else {
+        setFgRole('none')
+      }
+    },
+    [session.id],
+  )
+
+  const applyFgRaceState = useCallback(
+    (state: FallGuysActiveRace) => {
+      setFgRaceId(state.race.raceId)
+      setFgPlayers(state.race.players)
+      setFgScores(state.scores)
+      setFgRacePhase(state.phase)
+      setFgRaceOver(state.phase === 'results')
+      const isPlayer = state.race.players.some((p) => p.id === session.id)
+      if (isPlayer) {
+        setFgRole('player')
+      } else if (state.phase === 'racing' && roomIdRef.current === FALLGUYS_ROOM_ID) {
+        setFgRole((prev) => (prev === 'player' ? 'player' : 'spectator'))
+      }
+    },
+    [session.id],
+  )
+
+  const applyFgRaceStartRef = useRef(applyFgRaceStart)
+  applyFgRaceStartRef.current = applyFgRaceStart
+  const applyFgRaceStateRef = useRef(applyFgRaceState)
+  applyFgRaceStateRef.current = applyFgRaceState
 
   useEffect(() => {
     const net = new OfficeSocket(session.id)
@@ -195,6 +273,7 @@ export function WorldView() {
         }
         setPinsByRoom(pins)
         if (msg.fallguys) setFgLobby(msg.fallguys)
+        if (msg.fallguysRace) applyFgRaceStateRef.current(msg.fallguysRace)
         return
       }
       if (msg.type === 'fallguys-lobby') {
@@ -202,20 +281,11 @@ export function WorldView() {
         return
       }
       if (msg.type === 'fallguys-race-start') {
-        setFgRaceId(msg.race.raceId)
-        setFgPlayers(msg.race.players)
-        setFgScores(
-          msg.race.players.map((p) => ({
-            id: p.id,
-            name: p.name,
-            progress: 0,
-            finishedAt: null,
-          })),
-        )
-        setFgRaceOver(false)
-        if (msg.race.players.some((p) => p.id === session.id)) {
-          setFgPlaying(true)
-        }
+        applyFgRaceStartRef.current(msg.race)
+        return
+      }
+      if (msg.type === 'fallguys-race-state') {
+        applyFgRaceStateRef.current(msg.state)
         return
       }
       if (msg.type === 'fallguys-race-update') {
@@ -225,6 +295,7 @@ export function WorldView() {
       if (msg.type === 'fallguys-race-over') {
         setFgScores(msg.result.ranking)
         setFgRaceOver(true)
+        setFgRacePhase('results')
         return
       }
       if (msg.type === 'room-pin') {
@@ -393,9 +464,26 @@ export function WorldView() {
           publishRef.current()
         }
       }
+      if (e.code === 'KeyE' && !e.repeat) {
+        e.preventDefault()
+        // Dragon-only fire breath
+        const look = lookRef.current
+        if (
+          look.species === 'animal' &&
+          normalizeAnimalKind(look.animalKind) === 'dragon'
+        ) {
+          sceneRef.current?.breathFire()
+          fireAtRef.current = Date.now()
+          publishRef.current()
+        }
+      }
       if (e.code === 'KeyF' && !e.repeat) {
         e.preventDefault()
         tryStartFishingRef.current()
+      }
+      if (e.code === 'KeyM' && !e.repeat) {
+        e.preventDefault()
+        toggleVoiceRef.current()
       }
       if (e.code === 'Equal' || e.code === 'NumpadAdd' || e.key === '=' || e.key === '+') {
         e.preventDefault()
@@ -471,17 +559,27 @@ export function WorldView() {
     }
     wrap.addEventListener('wheel', onWheel, { passive: false })
 
-    const canFly =
-      session.look.species === 'animal' && normalizeAnimalKind(session.look.animalKind) === 'bird'
+    const canFly = canFlyOverWater(session.look)
 
     const tryMove = (nx: number, ny: number) => {
+      let x = nx
+      let y = ny
+      // Racers stay on the pink pad until they quit the overlay
+      if (fgRoleRef.current === 'player') {
+        const fg = map.rooms.find((r) => r.id === FALLGUYS_ROOM_ID)
+        if (fg) {
+          const inset = TILE * 0.55
+          x = Math.min(Math.max(x, fg.x * TILE + inset), (fg.x + fg.w) * TILE - inset)
+          y = Math.min(Math.max(y, fg.y * TILE + inset), (fg.y + fg.h) * TILE - inset)
+        }
+      }
       const radius = 8
       const samples = [
-        [nx, ny],
-        [nx - radius, ny],
-        [nx + radius, ny],
-        [nx, ny - radius],
-        [nx, ny + radius],
+        [x, y],
+        [x - radius, y],
+        [x + radius, y],
+        [x, y - radius],
+        [x, y + radius],
       ]
       for (const [sx, sy] of samples) {
         const tx = Math.floor(sx / TILE)
@@ -489,7 +587,8 @@ export function WorldView() {
         if (!canTraverse(map, tx, ty, canFly)) return
       }
       const prevRoom = roomAt(map, pos.current.x, pos.current.y)
-      const nextRoom = roomAt(map, nx, ny)
+      const nextRoom = roomAt(map, x, y)
+      if (fgRoleRef.current === 'player' && nextRoom?.id !== FALLGUYS_ROOM_ID) return
       if (nextRoom && (!prevRoom || prevRoom.id !== nextRoom.id)) {
         if (lockedRoomsRef.current.has(nextRoom.id)) return
         if (!isUnlimited(nextRoom)) {
@@ -497,8 +596,8 @@ export function WorldView() {
           if (others + 1 > nextRoom.capacity) return
         }
       }
-      pos.current.x = nx
-      pos.current.y = ny
+      pos.current.x = x
+      pos.current.y = y
     }
 
     const maintainMedia = (now: number) => {
@@ -732,6 +831,9 @@ export function WorldView() {
       setMediaError(mediaErrMessage(err, 'ไม่สามารถเปิดไมโครโฟนได้'))
     }
   }
+  toggleVoiceRef.current = () => {
+    void toggleVoice()
+  }
 
   async function toggleShare() {
     if (!roomId) return
@@ -946,13 +1048,13 @@ export function WorldView() {
           onDone={(id) => setFloatEmojis((prev) => prev.filter((e) => e.id !== id))}
         />
         <FishingCatchOverlay catchItem={fishCatch} />
-        {nearWater && !fishingActive && !fgPlaying && (
+        {nearWater && !fishingActive && fgRole === 'none' && (
           <div className="world__fish-hint">กด F เพื่อตกปลา</div>
         )}
         {fishingActive && !fishCatch && (
           <div className="world__fish-hint is-wait">กำลังรอปลากัด…</div>
         )}
-        {roomId === FALLGUYS_ROOM_ID && !fgPlaying && (
+        {roomId === FALLGUYS_ROOM_ID && fgRole === 'none' && fgRacePhase !== 'racing' && (
           <div className="world__fg-lobby">
             <strong>Fall Guys Arena</strong>
             <p>
@@ -968,7 +1070,13 @@ export function WorldView() {
             </button>
           </div>
         )}
-        {fgPlaying && (
+        {roomId === FALLGUYS_ROOM_ID && fgRole === 'none' && fgRacePhase === 'racing' && (
+          <div className="world__fg-lobby">
+            <strong>กำลังแข่งอยู่</strong>
+            <p>ยืนในโซนเพื่อเข้าชม</p>
+          </div>
+        )}
+        {fgRole !== 'none' && (
           <FallGuysGame
             selfId={session.id}
             selfName={session.look.displayName}
@@ -977,7 +1085,9 @@ export function WorldView() {
             scores={fgScores}
             raceOver={fgRaceOver}
             isHost={fgLobby.hostId === session.id}
+            spectating={fgRole === 'spectator'}
             onProgress={(progress, finished) => {
+              if (fgRoleRef.current !== 'player') return
               netRef.current?.send({
                 type: 'fallguys-progress',
                 raceId: fgRaceIdRef.current,
@@ -988,8 +1098,12 @@ export function WorldView() {
             onRestart={() => netRef.current?.send({ type: 'fallguys-restart' })}
             onQuit={() => {
               netRef.current?.send({ type: 'fallguys-quit' })
-              setFgPlaying(false)
-              setFgRaceOver(false)
+              fgDismissedRaceRef.current = fgRaceIdRef.current
+              setFgRole('none')
+              if (fgRacePhaseRef.current === 'results') {
+                setFgRacePhase('idle')
+                setFgRaceOver(false)
+              }
             }}
           />
         )}
@@ -1027,7 +1141,8 @@ export function WorldView() {
           </div>
         )}
         <div className="world__hint world__hint--desktop">
-          WASD / ลูกศร เดิน · Space กระโดด · F ตกปลา · โซนชมพู = Fall Guys · ลูกกลมเมาส์ / +− ซูม
+          WASD / ลูกศร เดิน · Space กระโดด · F ตกปลา · M ไมค์ · มังกรกด E พ่นไฟ · โซนชมพู = Fall Guys ·
+          ลูกกลมเมาส์ / +− ซูม
         </div>
         <MobileControls
           stickRef={stickRef}
@@ -1115,9 +1230,33 @@ export function WorldView() {
                 placeholder="Room chat…"
                 pinned={pinsByRoom.get(roomId) ?? null}
                 onPinMessage={(message) => {
+                  // Ensure server has current roomId before pin auth check
+                  publishRef.current()
+                  const pinned: PinnedMessage = {
+                    roomId,
+                    messageId: message.id,
+                    text: message.text,
+                    fromId: message.fromId,
+                    fromName: message.fromName,
+                    at: message.at,
+                    pinnedById: session.id,
+                    pinnedByName: session.look.displayName,
+                    pinnedAt: Date.now(),
+                  }
+                  setPinsByRoom((prev) => {
+                    const next = new Map(prev)
+                    next.set(roomId, pinned)
+                    return next
+                  })
                   netRef.current?.send({ type: 'room-pin', roomId, message })
                 }}
                 onUnpin={() => {
+                  publishRef.current()
+                  setPinsByRoom((prev) => {
+                    const next = new Map(prev)
+                    next.delete(roomId)
+                    return next
+                  })
                   netRef.current?.send({ type: 'room-pin', roomId, message: null })
                 }}
                 onSend={(text) => {

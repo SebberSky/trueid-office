@@ -122,7 +122,12 @@ export function ChatPanel({
                   type="button"
                   className={isPinned ? 'chat__msg-pin on' : 'chat__msg-pin'}
                   title={isPinned ? 'เลิกปักหมุด' : 'ปักหมุดข้อความนี้'}
-                  onClick={() => (isPinned ? onUnpin?.() : onPinMessage?.(m))}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    e.stopPropagation()
+                    if (isPinned) onUnpin?.()
+                    else onPinMessage?.(m)
+                  }}
                 >
                   📌
                 </button>

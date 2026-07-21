@@ -6,6 +6,7 @@ import type { ClientMsg, ServerMsg } from '../shared/protocol'
 import { ensureDataDir, loadAppearance, saveAppearance } from './appearances'
 import {
   fallGuysWelcomeLobby,
+  fallGuysWelcomeRace,
   handleFallGuysMsg,
   onFallGuysLeave,
   onFallGuysPresence,
@@ -67,7 +68,7 @@ function occupantsIn(roomId: string): number {
   return n
 }
 
-/** Clear locks/pins when a room is empty so state does not stick. */
+/** Clear locks when a room is empty. Pins persist until explicitly unpinned. */
 function clearEmptyRooms() {
   for (const roomId of [...lockedRooms.keys()]) {
     if (occupantsIn(roomId) > 0) continue
@@ -76,17 +77,6 @@ function clearEmptyRooms() {
       type: 'room-lock',
       roomId,
       locked: false,
-      byId: 'system',
-      byName: 'system',
-    })
-  }
-  for (const roomId of [...pinnedByRoom.keys()]) {
-    if (occupantsIn(roomId) > 0) continue
-    pinnedByRoom.delete(roomId)
-    broadcast({
-      type: 'room-pin',
-      roomId,
-      pinned: null,
       byId: 'system',
       byName: 'system',
     })
@@ -184,6 +174,7 @@ wss.on('connection', (ws) => {
         lockedRooms: lockedRoomIds(),
         pinnedMessages: allPinnedMessages(),
         fallguys: fallGuysWelcomeLobby({ clients, send, broadcast }),
+        fallguysRace: fallGuysWelcomeRace(),
       })
       return
     }
@@ -220,7 +211,10 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.type === 'room-pin') {
-      if (!client.id || !client.peer) return
+      if (!client.id || !client.peer) {
+        send(ws, { type: 'error', message: 'presence required to pin/unpin' })
+        return
+      }
       const roomId = msg.roomId?.trim()
       if (!roomId) {
         send(ws, { type: 'error', message: 'roomId required' })
@@ -233,13 +227,14 @@ wss.on('connection', (ws) => {
       const byName = client.peer.look?.displayName || client.email || client.id
       if (!msg.message) {
         pinnedByRoom.delete(roomId)
-        broadcast({
-          type: 'room-pin',
+        const out = {
+          type: 'room-pin' as const,
           roomId,
           pinned: null,
           byId: client.id,
           byName,
-        })
+        }
+        broadcast(out)
         return
       }
       const text = String(msg.message.text || '')

@@ -204,6 +204,9 @@ export function generateWorld(seed = 20260717): WorldMap {
     occupied.push({ x: plaza.x, y: plaza.y, w: plaza.w, h: plaza.h })
   }
 
+  // Fall Guys pad first (reserves space) so meeting rooms stay clear of it
+  stampFallGuysArena(tiles, occupied, rooms)
+
   const slots = buildSlots()
   for (const spec of roomSpecs) {
     const slot = takeSlot(slots, occupied, spec.w, spec.h)
@@ -220,9 +223,6 @@ export function generateWorld(seed = 20260717): WorldMap {
 
   // Guarantee a few visible campus ponds (paths/rooms can wipe natural water)
   stampCampusPonds(tiles, occupied, seed)
-
-  // Fall Guys arena — fixed colorful pad east of plaza / along the main path
-  stampFallGuysArena(tiles, occupied, rooms)
 
   // Spawn on central path near plaza if possible
   let spawn = { x: 42, y: 34 }
@@ -294,8 +294,8 @@ function overlapsAny(
   w: number,
   h: number,
   occupied: { x: number; y: number; w: number; h: number }[],
+  pad = 1,
 ) {
-  const pad = 1
   for (const o of occupied) {
     if (
       c.x < o.x + o.w + pad &&
@@ -409,43 +409,71 @@ function stampPlaza(tiles: TerrainType[][], room: RoomDef) {
   }
 }
 
-/** Bright rectangular pad for the Fall Guys mini-game lobby. */
+/**
+ * Fall Guys lobby: one solid meet-room-sized rectangle, placed south of a path
+ * on the far east so it sits apart from meeting rooms (which sit north of paths).
+ */
 function stampFallGuysArena(
   tiles: TerrainType[][],
   occupied: { x: number; y: number; w: number; h: number }[],
   rooms: RoomDef[],
 ) {
-  const candidates = [
-    { x: 58, y: 35, w: 10, h: 8 },
-    { x: 2, y: 35, w: 10, h: 8 },
-    { x: 58, y: 22, w: 10, h: 8 },
+  // Same footprint as Meet 8
+  const w = 9
+  const h = 6
+  // Prefer south of path rows (meeting rooms take the north side)
+  const candidates: { x: number; y: number; pathY: number }[] = [
+    { x: 70, y: 47, pathY: 45 },
+    { x: 68, y: 47, pathY: 45 },
+    { x: 70, y: 35, pathY: 33 },
+    { x: 2, y: 47, pathY: 45 },
+    { x: 2, y: 35, pathY: 33 },
   ]
   let spot = candidates[0]!
   for (const c of candidates) {
-    if (!overlapsAny(c, c.w, c.h, occupied)) {
+    if (c.x + w >= MAP_W - 1 || c.y + h >= MAP_H - 1) continue
+    // Extra gap from other footprints so it doesn't sit against meeting rooms
+    if (!overlapsAny(c, w, h, occupied, 3)) {
       spot = c
       break
     }
   }
+
   const room: RoomDef = {
     id: FALLGUYS_ROOM_ID,
     name: FALLGUYS_ROOM_NAME,
     x: spot.x,
     y: spot.y,
-    w: spot.w,
-    h: spot.h,
+    w,
+    h,
     capacity: 16,
     color: '#ff4fd8',
-    door: 'w',
+    door: 'n',
     kind: 'plaza',
   }
   flattenFootprint(tiles, room.x, room.y, room.w, room.h)
-  stampPlaza(tiles, room)
-  for (let y = room.y + 1; y < room.y + room.h - 1; y++) {
-    for (let x = room.x + 1; x < room.x + room.w - 1; x++) {
-      tiles[y][x] = (x + y) % 2 === 0 ? 'plaza' : 'plazaBorder'
+
+  // Solid rectangle — border ring + flat fill (no checker, no plaza gate cuts)
+  for (let y = room.y; y < room.y + room.h; y++) {
+    for (let x = room.x; x < room.x + room.w; x++) {
+      const onBorder =
+        y === room.y || y === room.y + room.h - 1 || x === room.x || x === room.x + room.w - 1
+      tiles[y][x] = onBorder ? 'plazaBorder' : 'plaza'
     }
   }
+
+  // Door on the north edge facing the path
+  const door = roomDoor(room)
+  tiles[door.doorY][door.doorX] = 'plaza'
+  tiles[door.doorY][door.doorX2] = 'plaza'
+  for (let y = room.y - 1; y >= spot.pathY && y > 0; y--) {
+    for (const x of [door.doorX - 1, door.doorX, door.doorX2, door.doorX2 + 1]) {
+      if (x <= 0 || x >= MAP_W - 1) continue
+      const t = tiles[y][x]
+      if (t !== 'wall' && t !== 'water' && t !== 'rock') tiles[y][x] = 'path'
+    }
+  }
+
   rooms.push(room)
   occupied.push({ x: room.x, y: room.y, w: room.w, h: room.h })
 }
@@ -546,7 +574,7 @@ export function canWalk(map: WorldMap, tx: number, ty: number): boolean {
   return t !== null && WALKABLE[t]
 }
 
-/** Walk, or fly over water (birds). Still blocked by walls / rock / desk / world edge. */
+/** Walk, or fly over water (birds / dragons). Still blocked by walls / rock / desk / world edge. */
 export function canTraverse(map: WorldMap, tx: number, ty: number, fly = false): boolean {
   if (tx < 1 || ty < 1 || tx >= MAP_W - 1 || ty >= MAP_H - 1) return false
   const t = tileAt(map, tx, ty)

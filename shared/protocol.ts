@@ -7,6 +7,7 @@ import type {
   FallGuysRaceOver,
   FallGuysRaceStart,
   FallGuysRaceUpdate,
+  FallGuysActiveRace,
 } from '../src/fallguys/types'
 
 /** Client → Server */
@@ -37,6 +38,7 @@ export type ServerMsg =
       lockedRooms: string[]
       pinnedMessages: PinnedMessage[]
       fallguys?: FallGuysLobbyState
+      fallguysRace?: FallGuysActiveRace | null
     }
   | { type: 'presence'; peer: PeerPresence }
   | { type: 'leave'; id: string }
@@ -55,6 +57,7 @@ export type ServerMsg =
   | { type: 'fallguys-race-start'; race: FallGuysRaceStart }
   | { type: 'fallguys-race-update'; update: FallGuysRaceUpdate }
   | { type: 'fallguys-race-over'; result: FallGuysRaceOver }
+  | { type: 'fallguys-race-state'; state: FallGuysActiveRace }
   | { type: 'error'; message: string }
 
 export type { SignalData, CharacterLook, PeerPresence, ChatMessage, PinnedMessage, ActivityEvent }
