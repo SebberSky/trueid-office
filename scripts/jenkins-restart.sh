@@ -1,13 +1,37 @@
 #!/usr/bin/env bash
 # Restart TrueID Office under pm2 (called from Jenkins — job can exit; app keeps running).
-# Uses npx pm2 (same as Freestyle shell) — no global pm2 required.
-#
-# Host app lives at ~/apps/trueid-office (override with TRUEID_OFFICE_DIR).
-# Never pm2-start from the ephemeral Jenkins workspace.
+# Host app lives under ~/apps/ (default ~/apps/trueid-office). Override with TRUEID_OFFICE_DIR.
 set -euo pipefail
 
 SCRIPT_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-DEPLOY_DIR="${TRUEID_OFFICE_DIR:-$HOME/apps/trueid-office}"
+
+resolve_deploy_dir() {
+  if [[ -n "${TRUEID_OFFICE_DIR:-}" ]]; then
+    echo "$TRUEID_OFFICE_DIR"
+    return
+  fi
+  local preferred="$HOME/apps/trueid-office"
+  if [[ -d "$preferred/.git" ]]; then
+    echo "$preferred"
+    return
+  fi
+  # Fallback: sole git checkout under ~/apps
+  if [[ -d "$HOME/apps" ]]; then
+    local matches=()
+    local d
+    for d in "$HOME/apps"/*; do
+      [[ -d "$d/.git" ]] || continue
+      matches+=("$d")
+    done
+    if [[ ${#matches[@]} -eq 1 ]]; then
+      echo "${matches[0]}"
+      return
+    fi
+  fi
+  echo "$preferred"
+}
+
+DEPLOY_DIR="$(resolve_deploy_dir)"
 
 if [[ "$SCRIPT_ROOT" == *"/workspace/"* || "$SCRIPT_ROOT" == *"jenkins"* || "$SCRIPT_ROOT" == *"Jenkins"* ]]; then
   APP_DIR="$DEPLOY_DIR"
@@ -15,14 +39,22 @@ if [[ "$SCRIPT_ROOT" == *"/workspace/"* || "$SCRIPT_ROOT" == *"jenkins"* || "$SC
   echo "==> syncing permanent deploy dir: $APP_DIR"
   if [[ ! -d "$APP_DIR/.git" ]]; then
     echo "ERROR: permanent deploy dir missing: $APP_DIR" >&2
-    echo "Set TRUEID_OFFICE_DIR if the host clone is elsewhere." >&2
+    echo "Expected ~/apps/trueid-office (or set TRUEID_OFFICE_DIR)." >&2
+    ls -la "$HOME/apps" 2>&1 || true
     exit 1
   fi
   git -C "$APP_DIR" fetch origin
   git -C "$APP_DIR" checkout -B main origin/main
   git -C "$APP_DIR" reset --hard origin/main
 else
-  APP_DIR="$SCRIPT_ROOT"
+  # Manual run: if we're already inside ~/apps/..., use that; else prefer deploy dir when present.
+  if [[ "$SCRIPT_ROOT" == *"/apps/"* ]]; then
+    APP_DIR="$SCRIPT_ROOT"
+  elif [[ -d "$DEPLOY_DIR/.git" ]]; then
+    APP_DIR="$DEPLOY_DIR"
+  else
+    APP_DIR="$SCRIPT_ROOT"
+  fi
   echo "==> manual restart from: $APP_DIR"
 fi
 
