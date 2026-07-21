@@ -21,6 +21,7 @@ export class OfficeSocket {
   private ws: WebSocket | null = null
   private handlers = new Set<Handler>()
   private queue: ClientMsg[] = []
+  private openHooks = new Set<() => void>()
   private selfId: string
   private closed = false
   private retryMs = 800
@@ -36,6 +37,14 @@ export class OfficeSocket {
     this.ws = ws
     ws.onopen = () => {
       this.retryMs = 800
+      // Re-auth / hello before flushing queued messages (needed after reconnect).
+      this.openHooks.forEach((fn) => {
+        try {
+          fn()
+        } catch {
+          /* ignore */
+        }
+      })
       for (const msg of this.queue) ws.send(JSON.stringify(msg))
       this.queue = []
     }
@@ -55,6 +64,13 @@ export class OfficeSocket {
     }
   }
 
+  /** Runs on every successful open (including reconnects). */
+  onOpen(fn: () => void) {
+    this.openHooks.add(fn)
+    if (this.ws?.readyState === WebSocket.OPEN) fn()
+    return () => this.openHooks.delete(fn)
+  }
+
   send(msg: ClientMsg) {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send(JSON.stringify(msg))
@@ -71,6 +87,7 @@ export class OfficeSocket {
   destroy() {
     this.closed = true
     this.handlers.clear()
+    this.openHooks.clear()
     this.ws?.close()
     this.ws = null
   }

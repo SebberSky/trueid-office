@@ -45,7 +45,7 @@ function nameOf(c: Client) {
 
 function inBooth(deps: Deps): Client[] {
   return [...deps.clients].filter(
-    (c) => c.id && c.peer?.roomId === XO_ROOM_ID && c.ws.readyState === c.ws.OPEN,
+    (c) => c.id && c.peer?.roomId === XO_ROOM_ID && c.ws.readyState === 1,
   )
 }
 
@@ -156,18 +156,21 @@ function forfeitIfNeeded(deps: Deps, leftId: string) {
 export function onXoPresence(deps: Deps, client: Client) {
   const id = client.id
   if (!id) return
+  const nowIn = client.peer?.roomId === XO_ROOM_ID
   const wasIn = boothJoinedAt.has(id)
-  if (client.peer?.roomId === XO_ROOM_ID) {
+  if (nowIn) {
     if (!wasIn) boothJoinedAt.set(id, Date.now())
     if (!wasIn && (phase === 'playing' || phase === 'results')) {
       const state = activeSnapshot()
       if (state) deps.send(client.ws, { type: 'xo-game-state', state })
     }
-  } else {
+  } else if (wasIn) {
     boothJoinedAt.delete(id)
     forfeitIfNeeded(deps, id)
   }
-  if (phase === 'lobby' || phase === 'results') publishLobby(deps)
+  if (nowIn !== wasIn || phase === 'lobby' || phase === 'results') {
+    if (phase === 'lobby' || phase === 'results') publishLobby(deps)
+  }
 }
 
 export function onXoLeave(deps: Deps, id: string | null) {

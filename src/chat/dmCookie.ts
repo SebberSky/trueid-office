@@ -3,6 +3,8 @@ import type { DmMessage } from './types'
 const TTL_MS = 24 * 60 * 60 * 1000
 const MAX_MSGS = 40
 const PREFIX = 'tid_dm_'
+/** Mirror cookie in localStorage — cookies can silently fail (size/quota); still honor 24h TTL. */
+const LS_PREFIX = 'tid_dm_ls_'
 
 type ThreadPayload = {
   /** Absolute expiry — thread wiped after this. */
@@ -12,12 +14,16 @@ type ThreadPayload = {
 }
 
 function cookieName(peerId: string) {
-  // Keep name short & cookie-safe
   const safe = peerId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48)
   return `${PREFIX}${safe || 'x'}`
 }
 
-function readRaw(name: string): string | null {
+function lsKey(peerId: string) {
+  const safe = peerId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 48)
+  return `${LS_PREFIX}${safe || 'x'}`
+}
+
+function readRawCookie(name: string): string | null {
   const parts = document.cookie.split(';')
   for (const part of parts) {
     const idx = part.indexOf('=')
@@ -38,62 +44,107 @@ function clearCookie(name: string) {
   document.cookie = `${name}=; path=/; max-age=0; SameSite=Lax`
 }
 
-/** Load DM thread for peer; clears cookie if past 24h. */
+function parsePayload(raw: string): ThreadPayload | null {
+  try {
+    // Cookie values may already be decoded by the browser
+    let text = raw
+    try {
+      text = decodeURIComponent(raw)
+    } catch {
+      text = raw
+    }
+    const data = JSON.parse(text) as ThreadPayload
+    if (!data?.exp || !Array.isArray(data.messages)) return null
+    return data
+  } catch {
+    return null
+  }
+}
+
+function readLs(peerId: string): ThreadPayload | null {
+  try {
+    const raw = localStorage.getItem(lsKey(peerId))
+    if (!raw) return null
+    return parsePayload(raw)
+  } catch {
+    return null
+  }
+}
+
+function writeLs(peerId: string, payload: ThreadPayload) {
+  try {
+    localStorage.setItem(lsKey(peerId), JSON.stringify(payload))
+  } catch {
+    /* quota */
+  }
+}
+
+function clearLs(peerId: string) {
+  try {
+    localStorage.removeItem(lsKey(peerId))
+  } catch {
+    /* ignore */
+  }
+}
+
+/** Load DM thread for peer; clears storage if past 24h. */
 export function loadDmThread(peerId: string): { peerName: string; messages: DmMessage[] } {
   const name = cookieName(peerId)
-  const raw = readRaw(name)
-  if (!raw) return { peerName: '', messages: [] }
-  try {
-    const data = JSON.parse(decodeURIComponent(raw)) as ThreadPayload
-    if (!data?.exp || Date.now() >= data.exp) {
-      clearCookie(name)
-      return { peerName: '', messages: [] }
-    }
-    return {
-      peerName: typeof data.peerName === 'string' ? data.peerName : '',
-      messages: Array.isArray(data.messages) ? data.messages.slice(-MAX_MSGS) : [],
-    }
-  } catch {
+  const fromCookie = readRawCookie(name)
+  const cookieData = fromCookie ? parsePayload(fromCookie) : null
+  const lsData = readLs(peerId)
+  const data =
+    cookieData && lsData
+      ? cookieData.exp >= lsData.exp
+        ? cookieData
+        : lsData
+      : cookieData || lsData
+
+  if (!data) return { peerName: '', messages: [] }
+  if (Date.now() >= data.exp) {
     clearCookie(name)
+    clearLs(peerId)
     return { peerName: '', messages: [] }
+  }
+  return {
+    peerName: typeof data.peerName === 'string' ? data.peerName : '',
+    messages: data.messages.slice(-MAX_MSGS),
   }
 }
 
 /** Persist DM thread; first write starts a 24h clock. */
 export function saveDmThread(peerId: string, peerName: string, messages: DmMessage[]) {
   const name = cookieName(peerId)
-  const existing = readRaw(name)
+  const existing = loadDmThread(peerId)
+  // loadDmThread already cleared if expired — start fresh clock when empty history was wiped
   let exp = Date.now() + TTL_MS
-  if (existing) {
-    try {
-      const prev = JSON.parse(decodeURIComponent(existing)) as ThreadPayload
-      if (prev?.exp && Date.now() < prev.exp) exp = prev.exp
-      else {
-        clearCookie(name)
-      }
-    } catch {
-      /* fresh */
-    }
-  }
+  const fromCookie = readRawCookie(name)
+  const cookieData = fromCookie ? parsePayload(fromCookie) : null
+  const lsData = readLs(peerId)
+  const prev = cookieData || lsData
+  if (prev?.exp && Date.now() < prev.exp) exp = prev.exp
+
   if (Date.now() >= exp) {
     clearCookie(name)
+    clearLs(peerId)
     return
   }
+
   const payload: ThreadPayload = {
     exp,
-    peerName,
+    peerName: peerName || existing.peerName,
     messages: messages.slice(-MAX_MSGS),
   }
-  const encoded = encodeURIComponent(JSON.stringify(payload))
-  // Cookie budget ~4KB — drop older msgs until it fits
+
+  writeLs(peerId, payload)
+
   let msgs = payload.messages
-  let value = encoded
+  let value = encodeURIComponent(JSON.stringify({ ...payload, messages: msgs }))
   while (msgs.length > 1 && value.length > 3500) {
     msgs = msgs.slice(1)
     value = encodeURIComponent(JSON.stringify({ ...payload, messages: msgs }))
   }
   if (value.length > 3800) {
-    // Still too big — keep only latest few
     msgs = msgs.slice(-8)
     value = encodeURIComponent(JSON.stringify({ ...payload, messages: msgs }))
   }
@@ -103,4 +154,5 @@ export function saveDmThread(peerId: string, peerName: string, messages: DmMessa
 
 export function clearDmThread(peerId: string) {
   clearCookie(cookieName(peerId))
+  clearLs(peerId)
 }

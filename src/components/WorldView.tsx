@@ -377,6 +377,10 @@ export function WorldView() {
         logout('บัญชีนี้เข้าสู่ระบบจากอุปกรณ์อื่นแล้ว — อุปกรณ์นี้ถูกตัดการเชื่อมต่อ')
         return
       }
+      if (msg.type === 'error') {
+        setMediaError(msg.message)
+        return
+      }
       if (msg.type === 'welcome') {
         applyLocks(msg.lockedRooms ?? [])
         const pins = new Map<string, PinnedMessage>()
@@ -781,8 +785,11 @@ export function WorldView() {
           if (others + 1 > nextRoom.capacity) return
         }
       }
+      const roomChanged = (prevRoom?.id ?? null) !== (nextRoom?.id ?? null)
       pos.current.x = x
       pos.current.y = y
+      // Entering/leaving game pads must update server roomId immediately for lobby counts
+      if (roomChanged) publishRef.current()
     }
 
     const maintainMedia = (now: number) => {
@@ -1192,6 +1199,14 @@ export function WorldView() {
 
   const canUseNameWheel = roomPeople.length > 3
 
+  // Live zone occupancy from presence (server lobby hostId still authoritative)
+  const fgZoneCount =
+    peersLive.filter((p) => p.roomId === FALLGUYS_ROOM_ID).length +
+    (roomId === FALLGUYS_ROOM_ID ? 1 : 0)
+  const xoZoneCount =
+    peersLive.filter((p) => p.roomId === XO_ROOM_ID).length +
+    (roomId === XO_ROOM_ID ? 1 : 0)
+
   useEffect(() => {
     if (!canUseNameWheel && wheelOpen) setWheelOpen(false)
   }, [canUseNameWheel, wheelOpen])
@@ -1284,12 +1299,12 @@ export function WorldView() {
           <div className="world__fg-lobby">
             <strong>Fall Guys Arena</strong>
             <p>
-              ในโซน {fgLobby.inZone.length} คน
+              ในโซน {fgZoneCount} คน
               {fgLobby.hostId === session.id ? ' · คุณเป็นโฮสต์' : ''}
             </p>
             <button
               type="button"
-              disabled={fgLobby.hostId !== session.id || fgLobby.inZone.length < 1}
+              disabled={fgLobby.hostId !== session.id || fgZoneCount < 1}
               onClick={() => netRef.current?.send({ type: 'fallguys-start' })}
             >
               {fgLobby.hostId === session.id ? 'เริ่มเกม' : 'รอโฮสต์เริ่ม…'}
@@ -1306,15 +1321,15 @@ export function WorldView() {
           <div className="world__fg-lobby">
             <strong>{XO_ROOM_NAME}</strong>
             <p>
-              ในโซน {xoLobby.inZone.length}/2 คน
+              ในโซน {xoZoneCount}/2 คน
               {xoLobby.hostId === session.id ? ' · คุณเป็นโฮสต์' : ''}
             </p>
             <button
               type="button"
-              disabled={xoLobby.hostId !== session.id || xoLobby.inZone.length !== 2}
+              disabled={xoLobby.hostId !== session.id || xoZoneCount !== 2}
               onClick={() => netRef.current?.send({ type: 'xo-start' })}
             >
-              {xoLobby.inZone.length !== 2
+              {xoZoneCount !== 2
                 ? 'รอผู้เล่น 2 คน'
                 : xoLobby.hostId === session.id
                   ? 'เริ่มเกม'
