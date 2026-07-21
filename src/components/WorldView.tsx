@@ -72,7 +72,6 @@ export function WorldView() {
   const globalChatRef = useRef<GlobalChatBus | null>(null)
   const activityRef = useRef<RoomActivityBus | null>(null)
   const sceneRef = useRef<CampusScene | null>(null)
-  const moveTargetRef = useRef<{ x: number; y: number } | null>(null)
   const lookRef = useRef(session.look)
   lookRef.current = session.look
   const netRef = useRef<OfficeSocket | null>(null)
@@ -579,25 +578,12 @@ export function WorldView() {
     }
     wrap.addEventListener('wheel', onWheel, { passive: false })
 
-    const onContextMenu = (e: MouseEvent) => e.preventDefault()
-    const onCanvasPointerDown = (e: PointerEvent) => {
-      if (e.button !== 2) return
-      if (!worldActiveRef.current || fgRoleRef.current !== 'none') return
-      e.preventDefault()
-      const hit = scene.pickGround(e.clientX, e.clientY, canvas)
-      if (hit) {
-        moveTargetRef.current = hit
-        scene.setMoveMarker(hit.x, hit.y)
-      }
-    }
-    canvas.addEventListener('contextmenu', onContextMenu)
-    canvas.addEventListener('pointerdown', onCanvasPointerDown)
-
     const canFly = canFlyOverWater(session.look)
 
-    const canMoveTo = (nx: number, ny: number) => {
+    const tryMove = (nx: number, ny: number) => {
       let x = nx
       let y = ny
+      // Racers stay on the pink pad until they quit the overlay
       if (fgRoleRef.current === 'player') {
         const fg = map.rooms.find((r) => r.id === FALLGUYS_ROOM_ID)
         if (fg) {
@@ -617,25 +603,20 @@ export function WorldView() {
       for (const [sx, sy] of samples) {
         const tx = Math.floor(sx / TILE)
         const ty = Math.floor(sy / TILE)
-        if (!canTraverse(map, tx, ty, canFly)) return false
+        if (!canTraverse(map, tx, ty, canFly)) return
       }
       const prevRoom = roomAt(map, pos.current.x, pos.current.y)
       const nextRoom = roomAt(map, x, y)
-      if (fgRoleRef.current === 'player' && nextRoom?.id !== FALLGUYS_ROOM_ID) return false
+      if (fgRoleRef.current === 'player' && nextRoom?.id !== FALLGUYS_ROOM_ID) return
       if (nextRoom && (!prevRoom || prevRoom.id !== nextRoom.id)) {
-        if (lockedRoomsRef.current.has(nextRoom.id)) return false
+        if (lockedRoomsRef.current.has(nextRoom.id)) return
         if (!isUnlimited(nextRoom)) {
           const others = peersRef.current.filter((p) => p.roomId === nextRoom.id).length
-          if (others + 1 > nextRoom.capacity) return false
+          if (others + 1 > nextRoom.capacity) return
         }
       }
-      return true
-    }
-
-    const tryMove = (nx: number, ny: number) => {
-      if (!canMoveTo(nx, ny)) return
-      pos.current.x = nx
-      pos.current.y = ny
+      pos.current.x = x
+      pos.current.y = y
     }
 
     const maintainMedia = (now: number) => {
@@ -717,8 +698,6 @@ export function WorldView() {
       const crouching = crouchingRef.current
       let moving = false
       if (dx !== 0 || dy !== 0) {
-        moveTargetRef.current = null
-        scene.setMoveMarker(null, null)
         const len = Math.hypot(dx, dy) || 1
         dx /= len
         dy /= len
@@ -728,32 +707,6 @@ export function WorldView() {
         tryMove(pos.current.x + dx * step, pos.current.y)
         tryMove(pos.current.x, pos.current.y + dy * step)
         moving = true
-      } else {
-        const target = moveTargetRef.current
-        if (target && fgRoleRef.current === 'none') {
-          const tdx = target.x - pos.current.x
-          const tdy = target.y - pos.current.y
-          const dist = Math.hypot(tdx, tdy)
-          if (dist < 6) {
-            moveTargetRef.current = null
-            scene.setMoveMarker(null, null)
-          } else {
-            const step = SPEED * (crouching ? 0.45 : 1) * dt
-            const mx = pos.current.x + (tdx / dist) * Math.min(step, dist)
-            const my = pos.current.y + (tdy / dist) * Math.min(step, dist)
-            const prevX = pos.current.x
-            const prevY = pos.current.y
-            tryMove(mx, my)
-            if (pos.current.x !== prevX || pos.current.y !== prevY) {
-              moving = true
-              if (Math.abs(tdx) > Math.abs(tdy)) facing.current = tdx < 0 ? 'left' : 'right'
-              else facing.current = tdy < 0 ? 'up' : 'down'
-            } else {
-              moveTargetRef.current = null
-              scene.setMoveMarker(null, null)
-            }
-          }
-        }
       }
 
       const atEdge = isAtWaterEdge(map, pos.current.x, pos.current.y)
@@ -787,8 +740,6 @@ export function WorldView() {
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', resize)
       wrap.removeEventListener('wheel', onWheel)
-      canvas.removeEventListener('contextmenu', onContextMenu)
-      canvas.removeEventListener('pointerdown', onCanvasPointerDown)
       scene.dispose()
       sceneRef.current = null
     }
@@ -1118,10 +1069,7 @@ export function WorldView() {
 
       <div className="world__stage" ref={wrapRef}>
         <canvas ref={canvasRef} tabIndex={0} />
-        <Minimap map={map} sceneRef={sceneRef} playerRef={pos} moveTargetRef={moveTargetRef} />
-        {fgRole === 'none' && !fishingActive && (
-          <div className="world__move-hint">คลิกขวา เดิน · ลากกรอบมินิแมพ เลื่อนมุมมอง</div>
-        )}
+        <Minimap map={map} sceneRef={sceneRef} playerRef={pos} />
         <FloatingEmojis
           items={floatEmojis}
           getAnchor={(fromId) => {

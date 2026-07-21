@@ -58,11 +58,6 @@ export class CampusScene {
   /** Camera look-at offset from the player (tile units). Set via minimap drag. */
   private camPanX = 0
   private camPanZ = 0
-  private moveMarker: THREE.Mesh | null = null
-  private readonly pickRay = new THREE.Raycaster()
-  private readonly pickNdc = new THREE.Vector2()
-  private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
-  private readonly pickHit = new THREE.Vector3()
   private readonly headWorld = new THREE.Vector3()
   private readonly headNdc = new THREE.Vector3()
   private fishingGroup = new THREE.Group()
@@ -743,52 +738,6 @@ export class CampusScene {
       playerTx: playerPx / TILE,
       playerTz: playerPy / TILE,
     }
-  }
-
-  /** Raycast from screen coords to the ground plane (returns map pixel coords). */
-  pickGround(clientX: number, clientY: number, canvas: HTMLCanvasElement): { x: number; y: number } | null {
-    const rect = canvas.getBoundingClientRect()
-    if (rect.width <= 0 || rect.height <= 0) return null
-    this.pickNdc.set(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1,
-    )
-    this.pickRay.setFromCamera(this.pickNdc, this.camera)
-    const hit = this.pickRay.ray.intersectPlane(this.groundPlane, this.pickHit)
-    if (!hit) return null
-    const px = hit.x * TILE
-    const py = hit.z * TILE
-    if (px < TILE * 0.5 || py < TILE * 0.5 || px > MAP_W * TILE - TILE * 0.5 || py > MAP_H * TILE - TILE * 0.5) {
-      return null
-    }
-    return { x: px, y: py }
-  }
-
-  setMoveMarker(px: number | null, py: number | null) {
-    if (!this.moveMarker) {
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.32, 0.48, 32),
-        new THREE.MeshBasicMaterial({
-          color: 0xfbbf24,
-          transparent: true,
-          opacity: 0.9,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
-      )
-      ring.rotation.x = -Math.PI / 2
-      ring.visible = false
-      ring.renderOrder = 10
-      this.moveMarker = ring
-      this.scene.add(ring)
-    }
-    if (px == null || py == null) {
-      this.moveMarker.visible = false
-      return
-    }
-    const { x, z } = toWorldXZ(px, py)
-    this.moveMarker.position.set(x, 0.16, z)
-    this.moveMarker.visible = true
   }
 
   /** Visual hop for the local player (Space). */
