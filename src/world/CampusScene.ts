@@ -760,6 +760,12 @@ export class CampusScene {
     return { x: this.camPanX, z: this.camPanZ }
   }
 
+  /** Snap look-at back onto the player (minimap frame centers the avatar). */
+  resetCameraPan() {
+    this.camPanX = 0
+    this.camPanZ = 0
+  }
+
   /** Pan the camera look-at away from the player (tile units). */
   setCameraPan(panX: number, panZ: number, playerPx: number, playerPy: number) {
     let focusTx = playerPx / TILE + panX

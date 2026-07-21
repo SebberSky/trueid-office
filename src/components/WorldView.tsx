@@ -19,6 +19,7 @@ import { FloatingEmojis, type FloatEmojiItem } from './FloatingEmojis'
 import { OnlineRoster, type RosterPerson } from './OnlineRoster'
 import { FishingCatchOverlay } from './FishingCatch'
 import { FallGuysGame } from './FallGuysGame'
+import { XoGame } from './XoGame'
 import { MobileControls } from './MobileControls'
 import { Minimap } from './Minimap'
 import {
@@ -33,6 +34,14 @@ import {
   type FallGuysLobbyState,
   type FallGuysRacer,
 } from '../fallguys/types'
+import {
+  XO_ROOM_ID,
+  emptyBoard,
+  type XoActiveGame,
+  type XoCell,
+  type XoLobbyState,
+  type XoPlayer,
+} from '../xo/types'
 import './World.css'
 
 const SPEED = 280
@@ -113,6 +122,20 @@ export function WorldView() {
   fgRacePhaseRef.current = fgRacePhase
   /** Race id the user closed overlay for — don't auto-reopen until a new race. */
   const fgDismissedRaceRef = useRef(0)
+
+  const [xoLobby, setXoLobby] = useState<XoLobbyState>({ hostId: null, inZone: [] })
+  const [xoRole, setXoRole] = useState<'none' | 'player'>('none')
+  const [xoGameId, setXoGameId] = useState(0)
+  const [xoPlayers, setXoPlayers] = useState<XoPlayer[]>([])
+  const [xoBoard, setXoBoard] = useState<XoCell[]>(() => emptyBoard())
+  const [xoTurnId, setXoTurnId] = useState('')
+  const [xoPhase, setXoPhase] = useState<'idle' | 'playing' | 'results'>('idle')
+  const [xoWinnerId, setXoWinnerId] = useState<string | null>(null)
+  const [xoReason, setXoReason] = useState<'win' | 'draw' | 'forfeit' | null>(null)
+  const xoRoleRef = useRef(xoRole)
+  xoRoleRef.current = xoRole
+  const xoDismissedGameRef = useRef(0)
+
   const fishTimerRef = useRef<number | null>(null)
   const fishPhaseRef = useRef<'idle' | 'waiting' | 'catch'>('idle')
   const fishingActiveRef = useRef(false)
@@ -255,6 +278,52 @@ export function WorldView() {
   const applyFgRaceStateRef = useRef(applyFgRaceState)
   applyFgRaceStateRef.current = applyFgRaceState
 
+  const applyXoGameStart = useCallback(
+    (game: {
+      gameId: number
+      players: XoPlayer[]
+      turnId: string
+      board: XoCell[]
+    }) => {
+      setXoGameId(game.gameId)
+      setXoPlayers(game.players)
+      setXoBoard(game.board)
+      setXoTurnId(game.turnId)
+      setXoPhase('playing')
+      setXoWinnerId(null)
+      setXoReason(null)
+      xoDismissedGameRef.current = 0
+      if (game.players.some((p) => p.id === session.id)) {
+        setXoRole('player')
+      } else {
+        setXoRole('none')
+      }
+    },
+    [session.id],
+  )
+
+  const applyXoGameState = useCallback(
+    (state: XoActiveGame) => {
+      setXoGameId(state.game.gameId)
+      setXoPlayers(state.game.players)
+      setXoBoard(state.game.board)
+      setXoTurnId(state.game.turnId)
+      setXoPhase(state.phase)
+      setXoWinnerId(state.winnerId)
+      setXoReason(state.reason)
+      const isPlayer = state.game.players.some((p) => p.id === session.id)
+      if (isPlayer && xoDismissedGameRef.current !== state.game.gameId) {
+        setXoRole('player')
+      }
+    },
+    [session.id],
+  )
+
+  const applyXoGameStartRef = useRef(applyXoGameStart)
+  applyXoGameStartRef.current = applyXoGameStart
+  const applyXoGameStateRef = useRef(applyXoGameState)
+  applyXoGameStateRef.current = applyXoGameState
+
   useEffect(() => {
     const net = new OfficeSocket(session.id)
     netRef.current = net
@@ -279,6 +348,8 @@ export function WorldView() {
         setPinsByRoom(pins)
         if (msg.fallguys) setFgLobby(msg.fallguys)
         if (msg.fallguysRace) applyFgRaceStateRef.current(msg.fallguysRace)
+        if (msg.xo) setXoLobby(msg.xo)
+        if (msg.xoGame) applyXoGameStateRef.current(msg.xoGame)
         return
       }
       if (msg.type === 'fallguys-lobby') {
@@ -301,6 +372,30 @@ export function WorldView() {
         setFgScores(msg.result.ranking)
         setFgRaceOver(true)
         setFgRacePhase('results')
+        return
+      }
+      if (msg.type === 'xo-lobby') {
+        setXoLobby(msg.lobby)
+        return
+      }
+      if (msg.type === 'xo-game-start') {
+        applyXoGameStartRef.current(msg.game)
+        return
+      }
+      if (msg.type === 'xo-game-state') {
+        applyXoGameStateRef.current(msg.state)
+        return
+      }
+      if (msg.type === 'xo-game-update') {
+        setXoBoard(msg.update.board)
+        setXoTurnId(msg.update.turnId)
+        return
+      }
+      if (msg.type === 'xo-game-over') {
+        setXoBoard(msg.result.board)
+        setXoWinnerId(msg.result.winnerId)
+        setXoReason(msg.result.reason)
+        setXoPhase('results')
         return
       }
       if (msg.type === 'room-pin') {
@@ -592,6 +687,14 @@ export function WorldView() {
           y = Math.min(Math.max(y, fg.y * TILE + inset), (fg.y + fg.h) * TILE - inset)
         }
       }
+      if (xoRoleRef.current === 'player') {
+        const xo = map.rooms.find((r) => r.id === XO_ROOM_ID)
+        if (xo) {
+          const inset = TILE * 0.55
+          x = Math.min(Math.max(x, xo.x * TILE + inset), (xo.x + xo.w) * TILE - inset)
+          y = Math.min(Math.max(y, xo.y * TILE + inset), (xo.y + xo.h) * TILE - inset)
+        }
+      }
       const radius = 8
       const samples = [
         [x, y],
@@ -608,6 +711,7 @@ export function WorldView() {
       const prevRoom = roomAt(map, pos.current.x, pos.current.y)
       const nextRoom = roomAt(map, x, y)
       if (fgRoleRef.current === 'player' && nextRoom?.id !== FALLGUYS_ROOM_ID) return
+      if (xoRoleRef.current === 'player' && nextRoom?.id !== XO_ROOM_ID) return
       if (nextRoom && (!prevRoom || prevRoom.id !== nextRoom.id)) {
         if (lockedRoomsRef.current.has(nextRoom.id)) return
         if (!isUnlimited(nextRoom)) {
@@ -698,6 +802,8 @@ export function WorldView() {
       const crouching = crouchingRef.current
       let moving = false
       if (dx !== 0 || dy !== 0) {
+        // Any move control recenters the minimap / camera on the player
+        scene.resetCameraPan()
         const len = Math.hypot(dx, dy) || 1
         dx /= len
         dy /= len
@@ -1107,6 +1213,51 @@ export function WorldView() {
             <strong>กำลังแข่งอยู่</strong>
             <p>ยืนในโซนเพื่อเข้าชม</p>
           </div>
+        )}
+        {roomId === XO_ROOM_ID && xoRole === 'none' && xoPhase !== 'playing' && (
+          <div className="world__fg-lobby">
+            <strong>XO · Tic-Tac-Toe</strong>
+            <p>
+              ในห้อง {xoLobby.inZone.length}/2 คน
+              {xoLobby.hostId === session.id ? ' · คุณเป็นโฮสต์' : ''}
+            </p>
+            <button
+              type="button"
+              disabled={xoLobby.hostId !== session.id || xoLobby.inZone.length !== 2}
+              onClick={() => netRef.current?.send({ type: 'xo-start' })}
+            >
+              {xoLobby.inZone.length !== 2
+                ? 'รอผู้เล่น 2 คน'
+                : xoLobby.hostId === session.id
+                  ? 'เริ่มเกม'
+                  : 'รอโฮสต์เริ่ม…'}
+            </button>
+          </div>
+        )}
+        {xoRole === 'player' && xoPhase !== 'idle' && (
+          <XoGame
+            selfId={session.id}
+            gameId={xoGameId}
+            players={xoPlayers}
+            board={xoBoard}
+            turnId={xoTurnId}
+            phase={xoPhase === 'results' ? 'results' : 'playing'}
+            winnerId={xoWinnerId}
+            reason={xoReason}
+            isHost={xoLobby.hostId === session.id}
+            onMove={(cell) =>
+              netRef.current?.send({ type: 'xo-move', gameId: xoGameId, cell })
+            }
+            onRestart={() => netRef.current?.send({ type: 'xo-restart' })}
+            onQuit={() => {
+              netRef.current?.send({ type: 'xo-quit' })
+              xoDismissedGameRef.current = xoGameId
+              setXoRole('none')
+              if (xoPhase === 'results') {
+                setXoPhase('idle')
+              }
+            }}
+          />
         )}
         {fgRole !== 'none' && (
           <FallGuysGame

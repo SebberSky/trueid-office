@@ -97,21 +97,15 @@ export function Minimap({ map, sceneRef, playerRef }: Props) {
 
   const onPointerDown = (e: React.PointerEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     const scene = sceneRef.current
     const player = playerRef.current
     if (!scene || !player) return
     canvasRef.current?.setPointerCapture(e.pointerId)
     const { tx, ty } = clientToTile(e.clientX, e.clientY)
-    const view = scene.getViewExtents(player.x, player.y)
-    const inView =
-      tx >= view.focusTx - view.halfW &&
-      tx <= view.focusTx + view.halfW &&
-      ty >= view.focusTz - view.halfH &&
-      ty <= view.focusTz + view.halfH
-    if (inView) {
-      const pan = scene.getCameraPan()
-      dragRef.current = { startTx: tx, startTy: ty, panX: pan.x, panZ: pan.z }
-    }
+    const pan = scene.getCameraPan()
+    // Drag anywhere on the minimap to free-look (frame stays until move controls)
+    dragRef.current = { startTx: tx, startTy: ty, panX: pan.x, panZ: pan.z }
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -133,7 +127,7 @@ export function Minimap({ map, sceneRef, playerRef }: Props) {
   }
 
   return (
-    <div className="minimap" title="ลากกรอบขาวเพื่อเลื่อนมุมมอง">
+    <div className="minimap" title="ลากเพื่อเลื่อนมุมมอง · กดเดินเพื่อกลับมาที่ตัวละคร">
       <canvas
         ref={canvasRef}
         width={MM_W}

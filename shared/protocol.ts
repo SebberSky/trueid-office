@@ -9,6 +9,13 @@ import type {
   FallGuysRaceUpdate,
   FallGuysActiveRace,
 } from '../src/fallguys/types'
+import type {
+  XoActiveGame,
+  XoGameOver,
+  XoGameStart,
+  XoGameUpdate,
+  XoLobbyState,
+} from '../src/xo/types'
 
 /** Client → Server */
 export type ClientMsg =
@@ -29,6 +36,10 @@ export type ClientMsg =
   | { type: 'fallguys-restart' }
   | { type: 'fallguys-quit' }
   | { type: 'fallguys-progress'; raceId: number; progress: number; finished: boolean }
+  | { type: 'xo-start' }
+  | { type: 'xo-restart' }
+  | { type: 'xo-quit' }
+  | { type: 'xo-move'; gameId: number; cell: number }
 
 /** Server → Client */
 export type ServerMsg =
@@ -39,6 +50,8 @@ export type ServerMsg =
       pinnedMessages: PinnedMessage[]
       fallguys?: FallGuysLobbyState
       fallguysRace?: FallGuysActiveRace | null
+      xo?: XoLobbyState
+      xoGame?: XoActiveGame | null
     }
   | { type: 'presence'; peer: PeerPresence }
   | { type: 'leave'; id: string }
@@ -58,6 +71,11 @@ export type ServerMsg =
   | { type: 'fallguys-race-update'; update: FallGuysRaceUpdate }
   | { type: 'fallguys-race-over'; result: FallGuysRaceOver }
   | { type: 'fallguys-race-state'; state: FallGuysActiveRace }
+  | { type: 'xo-lobby'; lobby: XoLobbyState }
+  | { type: 'xo-game-start'; game: XoGameStart }
+  | { type: 'xo-game-update'; update: XoGameUpdate }
+  | { type: 'xo-game-over'; result: XoGameOver }
+  | { type: 'xo-game-state'; state: XoActiveGame }
   | { type: 'error'; message: string }
 
 export type { SignalData, CharacterLook, PeerPresence, ChatMessage, PinnedMessage, ActivityEvent }
