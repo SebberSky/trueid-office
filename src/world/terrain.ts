@@ -516,6 +516,45 @@ export function isWaterAt(map: WorldMap, px: number, py: number): boolean {
   return tileAt(map, tx, ty) === 'water'
 }
 
+/** Standing on walkable land with at least one neighboring water tile. */
+export function isAtWaterEdge(map: WorldMap, px: number, py: number): boolean {
+  const tx = Math.floor(px / TILE)
+  const ty = Math.floor(py / TILE)
+  const here = tileAt(map, tx, ty)
+  if (!here || here === 'water' || !WALKABLE[here]) return false
+  for (let dy = -1; dy <= 1; dy++) {
+    for (let dx = -1; dx <= 1; dx++) {
+      if (dx === 0 && dy === 0) continue
+      if (tileAt(map, tx + dx, ty + dy) === 'water') return true
+    }
+  }
+  return false
+}
+
+/** Nearest water tile center (pixel) from the player — for casting the line. */
+export function nearestWaterCastTarget(
+  map: WorldMap,
+  px: number,
+  py: number,
+): { x: number; y: number } | null {
+  const tx = Math.floor(px / TILE)
+  const ty = Math.floor(py / TILE)
+  let best: { x: number; y: number; d: number } | null = null
+  for (let dy = -2; dy <= 2; dy++) {
+    for (let dx = -2; dx <= 2; dx++) {
+      if (dx === 0 && dy === 0) continue
+      const wx = tx + dx
+      const wy = ty + dy
+      if (tileAt(map, wx, wy) !== 'water') continue
+      const cx = wx * TILE + TILE / 2
+      const cy = wy * TILE + TILE / 2
+      const d = Math.hypot(cx - px, cy - py)
+      if (!best || d < best.d) best = { x: cx, y: cy, d }
+    }
+  }
+  return best ? { x: best.x, y: best.y } : null
+}
+
 export function roomAt(map: WorldMap, px: number, py: number): RoomDef | null {
   const tx = Math.floor(px / TILE)
   const ty = Math.floor(py / TILE)

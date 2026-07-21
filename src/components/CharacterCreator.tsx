@@ -60,8 +60,8 @@ export function CharacterCreator() {
             <input
               value={draft.displayName}
               onChange={(e) => setDraft({ displayName: e.target.value })}
-              maxLength={24}
-              placeholder="ชื่อเล่น"
+              maxLength={10}
+              placeholder="ชื่อเล่น (สูงสุด 10 ตัว)"
             />
           </label>
 

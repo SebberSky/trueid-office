@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react'
-import type { ChatChannel, ChatMessage } from '../chat/types'
+import type { ChatChannel, ChatMessage, PinnedMessage } from '../chat/types'
+import { linkifyText } from '../chat/linkify'
 import './ChatPanel.css'
 
 interface Props {
@@ -9,6 +10,10 @@ interface Props {
   placeholder: string
   disabledHint?: string
   onSend: (text: string) => void
+  /** Room pin (one per room). */
+  pinned?: PinnedMessage | null
+  onPinMessage?: (message: ChatMessage) => void
+  onUnpin?: () => void
   /** Room tools */
   tools?: {
     handRaised: boolean
@@ -20,6 +25,10 @@ interface Props {
   }
 }
 
+function isSysMessage(m: ChatMessage) {
+  return m.fromId === 'system' || m.text.startsWith('✋') || m.text.startsWith('📊') || m.text.startsWith('📌')
+}
+
 export function ChatPanel({
   channel,
   messages,
@@ -27,16 +36,20 @@ export function ChatPanel({
   placeholder,
   disabledHint,
   onSend,
+  pinned,
+  onPinMessage,
+  onUnpin,
   tools,
 }: Props) {
   const [text, setText] = useState('')
   const [emojiOpen, setEmojiOpen] = useState(false)
   const listRef = useRef<HTMLDivElement>(null)
+  const canPin = channel === 'room' && !!onPinMessage && !!onUnpin
 
   useEffect(() => {
     const el = listRef.current
     if (el) el.scrollTop = el.scrollHeight
-  }, [messages, tools?.raisedHands])
+  }, [messages, tools?.raisedHands, pinned?.messageId])
 
   function submit(e: FormEvent) {
     e.preventDefault()
@@ -54,6 +67,22 @@ export function ChatPanel({
         </span>
       </div>
 
+      {pinned && (
+        <div className="chat__pin">
+          <div className="chat__pin-body">
+            <span className="chat__pin-label">📌 ปักหมุด</span>
+            <strong>{pinned.fromName}</strong>
+            <span className="chat__pin-text">{linkifyText(pinned.text)}</span>
+            <span className="chat__pin-by">โดย {pinned.pinnedByName}</span>
+          </div>
+          {canPin && (
+            <button type="button" className="chat__pin-unpin" onClick={onUnpin} title="เลิกปักหมุด">
+              เลิกปัก
+            </button>
+          )}
+        </div>
+      )}
+
       {tools && tools.raisedHands.length > 0 && (
         <div className="chat__hands" title="คนที่ยกมือ">
           ✋ {tools.raisedHands.map((h) => h.name).join(', ')}
@@ -66,21 +95,41 @@ export function ChatPanel({
             {enabled ? 'ยังไม่มีข้อความ' : disabledHint || 'ไม่พร้อมใช้งาน'}
           </p>
         )}
-        {messages.map((m) => (
-          <div
-            key={m.id}
-            className={m.text.startsWith('✋') || m.text.startsWith('📊') ? 'chat__msg sys' : 'chat__msg'}
-          >
-            <strong>{m.fromName}</strong>
-            <span>{m.text}</span>
-            <time>
-              {new Date(m.at).toLocaleTimeString('th-TH', {
-                hour: '2-digit',
-                minute: '2-digit',
-              })}
-            </time>
-          </div>
-        ))}
+        {messages.map((m) => {
+          const sys = isSysMessage(m)
+          const isPinned = pinned?.messageId === m.id
+          return (
+            <div
+              key={m.id}
+              className={[
+                'chat__msg',
+                sys ? 'sys' : '',
+                isPinned ? 'is-pinned' : '',
+              ]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              <strong>{m.fromName}</strong>
+              <span>{linkifyText(m.text)}</span>
+              <time>
+                {new Date(m.at).toLocaleTimeString('th-TH', {
+                  hour: '2-digit',
+                  minute: '2-digit',
+                })}
+              </time>
+              {canPin && !sys && (
+                <button
+                  type="button"
+                  className={isPinned ? 'chat__msg-pin on' : 'chat__msg-pin'}
+                  title={isPinned ? 'เลิกปักหมุด' : 'ปักหมุดข้อความนี้'}
+                  onClick={() => (isPinned ? onUnpin?.() : onPinMessage?.(m))}
+                >
+                  📌
+                </button>
+              )}
+            </div>
+          )
+        })}
       </div>
 
       {tools && (

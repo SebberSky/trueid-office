@@ -46,6 +46,18 @@ export class CampusScene {
   /** Smooth zoom target & current in [0, 1]. */
   private zoomTarget = ZOOM_DEFAULT
   private zoom = ZOOM_DEFAULT
+  /** Smoothed camera look-at height (terrain-based — ignores bird flap / hover bob). */
+  private camFocusY = 0
+  private camFocusReady = false
+  private readonly headWorld = new THREE.Vector3()
+  private readonly headNdc = new THREE.Vector3()
+  private fishingGroup = new THREE.Group()
+  private fishingBobber: THREE.Mesh | null = null
+  private fishingLine: THREE.Line | null = null
+  private fishingActive = false
+  private fishingBobberPx = { x: 0, y: 0 }
+  private fishingClock = 0
+  private playerLabelName = ''
 
   constructor(canvas: HTMLCanvasElement, map: WorldMap, look: CharacterLook) {
     this.renderer = new THREE.WebGLRenderer({
@@ -98,7 +110,27 @@ export class CampusScene {
     this.playerIsBird =
       look.species === 'animal' && normalizeAnimalKind(look.animalKind) === 'bird'
     this.player = new Character3D(look)
+    this.playerLabelName = (look.displayName || 'guest').slice(0, 10)
     this.scene.add(this.player.root)
+
+    this.fishingGroup.visible = false
+    const bobber = new THREE.Mesh(
+      new THREE.SphereGeometry(0.12, 10, 8),
+      new THREE.MeshStandardMaterial({ color: 0xe11d48, roughness: 0.35, metalness: 0.1 }),
+    )
+    bobber.castShadow = true
+    this.fishingBobber = bobber
+    this.fishingGroup.add(bobber)
+    const lineGeo = new THREE.BufferGeometry().setFromPoints([
+      new THREE.Vector3(),
+      new THREE.Vector3(),
+    ])
+    this.fishingLine = new THREE.Line(
+      lineGeo,
+      new THREE.LineBasicMaterial({ color: 0xcbd5e1, transparent: true, opacity: 0.85 }),
+    )
+    this.fishingGroup.add(this.fishingLine)
+    this.scene.add(this.fishingGroup)
   }
 
   private buildTerrain(map: WorldMap) {
@@ -641,6 +673,47 @@ export class CampusScene {
     this.player.triggerJump()
   }
 
+  setLocalMic(voiceOn: boolean) {
+    this.player.setNameplate(this.playerLabelName, voiceOn)
+  }
+
+  /**
+   * Project a character head to canvas UV (0–1, origin top-left).
+   * `who === 'local'` uses the local player; otherwise a peer id.
+   */
+  projectHeadScreen(who: 'local' | string): { x: number; y: number } | null {
+    const avatar = who === 'local' ? this.player : this.peers.get(who)
+    if (!avatar) return null
+    avatar.getHeadWorld(this.headWorld)
+    this.headNdc.copy(this.headWorld).project(this.camera)
+    if (this.headNdc.z > 1) return null
+    return {
+      x: (this.headNdc.x + 1) / 2,
+      y: (-this.headNdc.y + 1) / 2,
+    }
+  }
+
+  /** Show / hide the local fishing line + bobber toward a pond cast target (pixel coords). */
+  setFishingCast(active: boolean, targetPx: { x: number; y: number } | null = null) {
+    this.fishingActive = active && !!targetPx
+    this.fishingGroup.visible = this.fishingActive
+    if (targetPx) this.fishingBobberPx = { x: targetPx.x, y: targetPx.y }
+  }
+
+  private updateFishingVisual(dt: number) {
+    if (!this.fishingActive || !this.fishingBobber || !this.fishingLine) return
+    this.fishingClock += dt
+    const { x: bx, z: bz } = toWorldXZ(this.fishingBobberPx.x, this.fishingBobberPx.y)
+    const bobY = TERRAIN_HEIGHT.water + 0.08 + Math.sin(this.fishingClock * 4.2) * 0.04
+    this.fishingBobber.position.set(bx, bobY, bz)
+
+    const hand = this.player.root.position
+    const positions = this.fishingLine.geometry.attributes.position as THREE.BufferAttribute
+    positions.setXYZ(0, hand.x, hand.y + 1.05, hand.z)
+    positions.setXYZ(1, bx, bobY + 0.02, bz)
+    positions.needsUpdate = true
+  }
+
   syncPeers(peers: PeerPresence[], map: WorldMap, dt = 0) {
     const seen = new Set<string>()
     for (const p of peers) {
@@ -661,6 +734,8 @@ export class CampusScene {
         }
         this.peerMotion.set(p.id, motion)
       }
+
+      avatar.setNameplate(p.look.displayName, !!p.voiceOn)
 
       motion.tx = p.x
       motion.ty = p.y
@@ -720,6 +795,7 @@ export class CampusScene {
     const y = surfaceY(map, px, py)
     const overWater = isWaterAt(map, px, py)
     this.player.setPose(x, z, y, facing, moving, dt, overWater)
+    this.updateFishingVisual(dt)
 
     // Soften / hide roof + beams when standing inside that room so the camera isn't blocked
     const inside = roomAt(map, px, py)
@@ -778,10 +854,15 @@ export class CampusScene {
     const followHeight = farHeight + (closeHeight - farHeight) * blend
 
     // Place camera at a rigid offset from the player every frame.
-    // Over water, birds hover — keep camera aimed at flight height, not the pond bed
-    const air = this.player.airHeight()
-    const focusY =
-      (this.playerIsBird && (moving || overWater) ? Math.max(y, 0.12) + 0.7 : y) + air
+    // Bird flap / water-hover / jump bob stay on the avatar mesh — do not pump the lens.
+    const desiredFocusY = this.playerIsBird ? y : y + this.player.airHeight()
+    if (!this.camFocusReady) {
+      this.camFocusY = desiredFocusY
+      this.camFocusReady = true
+    } else {
+      this.camFocusY += (desiredFocusY - this.camFocusY) * (1 - Math.exp(-10 * dt))
+    }
+    const focusY = this.camFocusY
     this.camera.position.set(
       x + (camDirX / camDirLen) * followDist,
       focusY + followHeight,
@@ -796,6 +877,10 @@ export class CampusScene {
     this.player.dispose()
     for (const a of this.peers.values()) a.dispose()
     this.roofs.clear()
+    this.fishingLine?.geometry.dispose()
+    ;(this.fishingLine?.material as THREE.Material | undefined)?.dispose()
+    this.fishingBobber?.geometry.dispose()
+    ;(this.fishingBobber?.material as THREE.Material | undefined)?.dispose()
     this.renderer.dispose()
   }
 }

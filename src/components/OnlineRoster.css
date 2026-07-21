@@ -1,0 +1,158 @@
+.roster {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 40;
+  min-width: 220px;
+  max-width: min(320px, 92vw);
+  max-height: min(360px, 60vh);
+  display: flex;
+  flex-direction: column;
+  border-radius: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  background: rgba(15, 23, 42, 0.96);
+  box-shadow: 0 12px 36px rgba(0, 0, 0, 0.45);
+  overflow: hidden;
+}
+
+.roster__head {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.55rem 0.65rem;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+}
+
+.roster__head strong {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #e2e8f0;
+}
+
+.roster__count {
+  font-size: 0.7rem;
+  font-weight: 700;
+  color: #0f172a;
+  background: #5eead4;
+  border-radius: 999px;
+  padding: 0.05rem 0.4rem;
+  min-width: 1.25rem;
+  text-align: center;
+}
+
+.roster__close {
+  margin-left: auto;
+  border: none;
+  background: transparent;
+  color: #94a3b8;
+  font-size: 1.15rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0.1rem 0.25rem;
+}
+
+.roster__close:hover {
+  color: #f8fafc;
+}
+
+.roster__empty {
+  margin: 0;
+  padding: 0.85rem 0.75rem;
+  font-size: 0.78rem;
+  color: #64748b;
+}
+
+.roster__list {
+  list-style: none;
+  margin: 0;
+  padding: 0.35rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+}
+
+.roster__list li {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  padding: 0.4rem 0.5rem;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.roster__list li.is-self {
+  background: rgba(26, 155, 142, 0.15);
+  border: 1px solid rgba(26, 155, 142, 0.35);
+}
+
+.roster__name {
+  display: flex;
+  align-items: baseline;
+  gap: 0.35rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #f1f5f9;
+}
+
+.roster__name em {
+  font-style: normal;
+  font-size: 0.65rem;
+  font-weight: 700;
+  color: #5eead4;
+}
+
+.roster__meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.68rem;
+  color: #94a3b8;
+}
+
+.roster__room {
+  color: #fca5a5;
+}
+
+.world__meta-item {
+  position: relative;
+}
+
+.world__online-btn,
+.world__room-btn {
+  appearance: none;
+  font: inherit;
+  cursor: pointer;
+  border: none;
+  background: transparent;
+  color: inherit;
+  padding: 0;
+}
+
+.world__online-btn {
+  color: #cbd5e1;
+  border-radius: 8px;
+  padding: 0.2rem 0.45rem;
+}
+
+.world__online-btn:hover,
+.world__online-btn.is-open {
+  background: rgba(94, 234, 212, 0.12);
+  color: #5eead4;
+}
+
+.world__room-btn {
+  background: rgba(200, 16, 46, 0.25);
+  border: 1px solid rgba(200, 16, 46, 0.45);
+  color: #fecaca;
+  padding: 0.25rem 0.65rem;
+  border-radius: 999px;
+  font-weight: 600;
+}
+
+.world__room-btn:hover,
+.world__room-btn.is-open {
+  background: rgba(200, 16, 46, 0.4);
+  border-color: rgba(252, 165, 165, 0.7);
+}

@@ -30,7 +30,12 @@ export class RoomMedia {
   private selfId: string
   private roomId: string | null = null
   private localStream: MediaStream | null = null
+  /** Outbound display-media share (this client only). */
   private screenStream: MediaStream | null = null
+  /** Inbound screen-share video keyed by peer id — independent of local share. */
+  private remoteScreens = new Map<string, MediaStream>()
+  /** Prefer showing the most recently updated remote when not self-sharing. */
+  private primaryRemoteId: string | null = null
   private pcs = new Map<string, RTCPeerConnection>()
   private channels = new Map<string, RTCDataChannel>()
   private remoteStreams = new Map<string, MediaStream>()
@@ -122,26 +127,32 @@ export class RoomMedia {
           video: false,
         })
       }
-      let needRenegotiate = false
-      for (const pc of this.pcs.values()) {
-        for (const track of this.localStream.getTracks()) {
-          const sender = pc.getSenders().find((s) => s.track?.kind === track.kind)
-          if (sender) await sender.replaceTrack(track)
-          else {
+      const needRenegotiate: string[] = []
+      for (const [peerId, pc] of this.pcs) {
+        const hadAudio = this.hasAudioTransceiver(pc)
+        this.ensureAudioTransceiver(pc)
+        for (const track of this.localStream.getAudioTracks()) {
+          const sender = this.audioSender(pc)
+          if (sender) {
+            if (sender.track !== track) await sender.replaceTrack(track)
+          } else {
             pc.addTrack(track, this.localStream)
-            needRenegotiate = true
+            needRenegotiate.push(peerId)
           }
         }
+        if (!hadAudio) needRenegotiate.push(peerId)
       }
-      if (needRenegotiate) {
-        for (const peerId of this.pcs.keys()) await this.renegotiate(peerId)
-      }
+      for (const peerId of new Set(needRenegotiate)) await this.renegotiate(peerId)
     } else if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop())
       this.localStream = null
       for (const pc of this.pcs.values()) {
-        for (const sender of pc.getSenders()) {
-          if (sender.track?.kind === 'audio') await sender.replaceTrack(null)
+        const sender = this.audioSender(pc)
+        if (sender) await sender.replaceTrack(null)
+        else {
+          for (const s of pc.getSenders()) {
+            if (s.track?.kind === 'audio') await s.replaceTrack(null)
+          }
         }
       }
     }
@@ -149,6 +160,8 @@ export class RoomMedia {
 
   async startScreenShare() {
     assertMediaAvailable()
+    // Replace prior local share without wiping remote viewers' streams.
+    if (this.screenStream) await this.stopScreenShare()
     this.screenStream = await navigator.mediaDevices.getDisplayMedia({
       video: true,
       audio: true,
@@ -156,7 +169,7 @@ export class RoomMedia {
     this.screenStream.getVideoTracks()[0]?.addEventListener('ended', () => {
       void this.stopScreenShare()
     })
-    this.onScreen(this.screenStream, this.selfId)
+    this.emitScreen()
 
     // Mid-call addTrack must be followed by renegotiation or remotes never see the video.
     for (const peerId of this.pcs.keys()) {
@@ -170,17 +183,65 @@ export class RoomMedia {
     }
   }
 
+  /**
+   * Stop only *this* client's outbound share.
+   * Does not clear inbound remote shares — UI falls back via emitScreen().
+   */
   async stopScreenShare() {
-    this.screenStream?.getTracks().forEach((t) => t.stop())
+    const local = this.screenStream
     this.screenStream = null
-    this.onScreen(null, null)
+    const localTracks = local ? new Set(local.getTracks()) : null
+    local?.getTracks().forEach((t) => t.stop())
     for (const pc of this.pcs.values()) {
       for (const sender of pc.getSenders()) {
-        if (sender.track?.kind === 'video') {
+        if (!sender.track || sender.track.kind !== 'video') continue
+        // Only detach our screen tracks — never touch remote receivers.
+        if (localTracks?.has(sender.track) || sender.track.readyState === 'ended') {
           await sender.replaceTrack(null)
         }
       }
     }
+    this.emitScreen()
+  }
+
+  /** Prefer local preview while we are the active sharer; otherwise latest remote. */
+  private emitScreen() {
+    if (this.screenStream) {
+      this.onScreen(this.screenStream, this.selfId)
+      return
+    }
+    if (this.primaryRemoteId) {
+      const stream = this.remoteScreens.get(this.primaryRemoteId)
+      if (stream?.getVideoTracks().some((t) => t.readyState === 'live')) {
+        this.onScreen(stream, this.primaryRemoteId)
+        return
+      }
+      this.primaryRemoteId = null
+    }
+    for (const [id, stream] of this.remoteScreens) {
+      if (stream.getVideoTracks().some((t) => t.readyState === 'live')) {
+        this.primaryRemoteId = id
+        this.onScreen(stream, id)
+        return
+      }
+    }
+    this.onScreen(null, null)
+  }
+
+  private clearRemoteScreen(peerId: string) {
+    const stream = this.remoteScreens.get(peerId)
+    if (stream) {
+      stream.getTracks().forEach((t) => {
+        try {
+          stream.removeTrack(t)
+        } catch {
+          /* ignore */
+        }
+      })
+      this.remoteScreens.delete(peerId)
+    }
+    if (this.primaryRemoteId === peerId) this.primaryRemoteId = null
+    this.emitScreen()
   }
 
   async syncRoom(roomId: string | null, peerIdsInRoom: string[]) {
@@ -249,6 +310,8 @@ export class RoomMedia {
 
     this.makingOffer.add(peerId)
     try {
+      // Always include an audio m-line so we can *receive* voice without enabling our mic.
+      this.ensureAudioTransceiver(pc)
       this.attachTracks(pc)
       const offer = await pc.createOffer()
       await pc.setLocalDescription(offer)
@@ -263,10 +326,37 @@ export class RoomMedia {
     }
   }
 
+  private hasAudioTransceiver(pc: RTCPeerConnection) {
+    return pc.getTransceivers().some((t) => {
+      const kind = t.sender.track?.kind ?? t.receiver.track?.kind
+      return kind === 'audio'
+    })
+  }
+
+  /**
+   * Guarantee a sendrecv audio transceiver so offers negotiate listen-only
+   * even when the local mic is off.
+   */
+  private ensureAudioTransceiver(pc: RTCPeerConnection) {
+    if (this.hasAudioTransceiver(pc)) return
+    pc.addTransceiver('audio', { direction: 'sendrecv' })
+  }
+
+  private audioSender(pc: RTCPeerConnection): RTCRtpSender | null {
+    const byTrack = pc.getSenders().find((s) => s.track?.kind === 'audio')
+    if (byTrack) return byTrack
+    const tr = pc.getTransceivers().find((t) => t.receiver.track?.kind === 'audio')
+    return tr?.sender ?? null
+  }
+
   private attachTracks(pc: RTCPeerConnection) {
+    this.ensureAudioTransceiver(pc)
     if (this.localStream) {
-      for (const track of this.localStream.getTracks()) {
-        if (!pc.getSenders().some((s) => s.track === track)) {
+      for (const track of this.localStream.getAudioTracks()) {
+        const sender = this.audioSender(pc)
+        if (sender) {
+          if (sender.track !== track) void sender.replaceTrack(track)
+        } else if (!pc.getSenders().some((s) => s.track === track)) {
           pc.addTrack(track, this.localStream)
         }
       }
@@ -308,11 +398,34 @@ export class RoomMedia {
       }
       this.onRemotes(new Map(this.remoteStreams))
       if (ev.track.kind === 'video') {
-        const remote = ev.streams[0] ?? new MediaStream([ev.track])
-        this.onScreen(remote, peerId)
-        const clear = () => this.onScreen(null, null)
-        ev.track.addEventListener('ended', clear)
-        ev.track.addEventListener('mute', clear)
+        let remote = this.remoteScreens.get(peerId)
+        if (!remote) {
+          remote = new MediaStream()
+          this.remoteScreens.set(peerId, remote)
+        }
+        if (!remote.getTracks().some((t) => t.id === ev.track.id)) {
+          remote.addTrack(ev.track)
+        }
+        this.primaryRemoteId = peerId
+        // Someone else took the screen — drop our outbound share so UI shows
+        // "แชร์จอ" again and we can overwrite them.
+        if (this.screenStream) {
+          void this.stopScreenShare()
+        } else {
+          this.emitScreen()
+        }
+        const onEnded = () => {
+          const current = this.remoteScreens.get(peerId)
+          if (current?.getTracks().some((t) => t.id === ev.track.id)) {
+            current.removeTrack(ev.track)
+          }
+          if (!current || current.getVideoTracks().length === 0) {
+            this.clearRemoteScreen(peerId)
+          } else {
+            this.emitScreen()
+          }
+        }
+        ev.track.addEventListener('ended', onEnded)
       }
     }
 
@@ -395,10 +508,14 @@ export class RoomMedia {
     this.pcs.delete(id)
     this.remoteStreams.delete(id)
     this.onRemotes(new Map(this.remoteStreams))
+    this.clearRemoteScreen(id)
   }
 
   private async teardownAll() {
     for (const id of [...this.pcs.keys()]) this.closePeer(id)
+    this.remoteScreens.clear()
+    this.primaryRemoteId = null
+    this.emitScreen()
   }
 
   async destroy() {
