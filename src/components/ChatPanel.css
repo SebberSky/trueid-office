@@ -326,3 +326,50 @@
   opacity: 0.4;
   cursor: not-allowed;
 }
+
+@media (max-width: 800px) {
+  .chat {
+    padding: 0.4rem 0.4rem 0;
+    gap: 0.3rem;
+    border-radius: 10px;
+  }
+
+  .chat__badge {
+    font-size: 0.65rem;
+  }
+
+  .chat__sub {
+    display: none;
+  }
+
+  .chat__list {
+    gap: 0.25rem;
+  }
+
+  .chat__msg {
+    font-size: 0.7rem;
+  }
+
+  .chat__tools .tool {
+    width: 1.85rem;
+    height: 1.85rem;
+    font-size: 0.85rem;
+  }
+
+  .chat__form {
+    gap: 0.3rem;
+    padding-bottom: 0.4rem;
+  }
+
+  .chat__form input {
+    font-size: 0.75rem;
+    padding: 0.4rem 0.5rem;
+    min-height: 36px;
+  }
+
+  .chat__form button {
+    padding: 0.4rem 0.55rem;
+    font-size: 0.7rem;
+    min-height: 36px;
+  }
+}

@@ -11,6 +11,13 @@ import {
   onFallGuysLeave,
   onFallGuysPresence,
 } from './fallguys'
+import {
+  handleXoMsg,
+  onXoLeave,
+  onXoPresence,
+  xoWelcomeGame,
+  xoWelcomeLobby,
+} from './xo'
 
 const PORT = Number(process.env.PORT || 3001)
 const STALE_MS = 5000
@@ -175,6 +182,8 @@ wss.on('connection', (ws) => {
         pinnedMessages: allPinnedMessages(),
         fallguys: fallGuysWelcomeLobby({ clients, send, broadcast }),
         fallguysRace: fallGuysWelcomeRace(),
+        xo: xoWelcomeLobby({ clients, send, broadcast }),
+        xoGame: xoWelcomeGame(),
       })
       return
     }
@@ -187,6 +196,7 @@ wss.on('connection', (ws) => {
       broadcast({ type: 'presence', peer: client.peer }, ws)
       clearEmptyRooms()
       onFallGuysPresence({ clients, send, broadcast }, client)
+      onXoPresence({ clients, send, broadcast }, client)
       return
     }
 
@@ -197,6 +207,7 @@ wss.on('connection', (ws) => {
       broadcast({ type: 'leave', id }, ws)
       clearEmptyRooms()
       onFallGuysLeave({ clients, send, broadcast }, id)
+      onXoLeave({ clients, send, broadcast }, id)
       return
     }
 
@@ -207,6 +218,16 @@ wss.on('connection', (ws) => {
       msg.type === 'fallguys-progress'
     ) {
       handleFallGuysMsg({ clients, send, broadcast }, client, msg)
+      return
+    }
+
+    if (
+      msg.type === 'xo-start' ||
+      msg.type === 'xo-restart' ||
+      msg.type === 'xo-quit' ||
+      msg.type === 'xo-move'
+    ) {
+      handleXoMsg({ clients, send, broadcast }, client, msg)
       return
     }
 

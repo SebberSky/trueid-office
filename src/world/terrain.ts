@@ -1,5 +1,6 @@
 import type { DoorSide, RoomDef, TerrainType } from '../types'
 import { FALLGUYS_ROOM_ID, FALLGUYS_ROOM_NAME } from '../fallguys/types'
+import { XO_ROOM_ID, XO_ROOM_NAME } from '../xo/types'
 
 export const TILE = 32
 export const MAP_W = 84
@@ -61,7 +62,7 @@ export const TERRAIN_COLOR: Record<TerrainType, string> = {
   path: '#c4b59a',
   floor: '#e8dfd0',
   sand: '#d4c48a',
-  water: '#3a8fc4',
+  water: '#2f8fc4',
   rock: '#6b6f76',
   wall: '#3d4450',
   desk: '#8b6914',
@@ -206,6 +207,8 @@ export function generateWorld(seed = 20260717): WorldMap {
 
   // Fall Guys pad first (reserves space) so meeting rooms stay clear of it
   stampFallGuysArena(tiles, occupied, rooms)
+  // XO booth (cap 2) — dedicated game room near west paths
+  stampXoBooth(tiles, occupied, rooms)
 
   const slots = buildSlots()
   for (const spec of roomSpecs) {
@@ -474,6 +477,49 @@ function stampFallGuysArena(
     }
   }
 
+  rooms.push(room)
+  occupied.push({ x: room.x, y: room.y, w: room.w, h: room.h })
+}
+
+/** Compact 2-player XO booth — real room so capacity 2 is enforced. */
+function stampXoBooth(
+  tiles: TerrainType[][],
+  occupied: { x: number; y: number; w: number; h: number }[],
+  rooms: RoomDef[],
+) {
+  const w = 6
+  const h = 5
+  const candidates: { x: number; y: number }[] = [
+    { x: 3, y: 24 },
+    { x: 3, y: 12 },
+    { x: 14, y: 24 },
+    { x: 3, y: 36 },
+    { x: 58, y: 12 },
+  ]
+  let spot = candidates[0]!
+  for (const c of candidates) {
+    if (c.x + w >= MAP_W - 1 || c.y + h >= MAP_H - 1) continue
+    if (!overlapsAny(c, w, h, occupied, 2)) {
+      spot = c
+      break
+    }
+  }
+
+  const room: RoomDef = {
+    id: XO_ROOM_ID,
+    name: XO_ROOM_NAME,
+    x: spot.x,
+    y: spot.y,
+    w,
+    h,
+    capacity: 2,
+    color: '#0ea5e9',
+    door: 's',
+    kind: 'room',
+  }
+  flattenFootprint(tiles, room.x, room.y, room.w, room.h)
+  stampRoom(tiles, room)
+  clearDoorApproach(tiles, room)
   rooms.push(room)
   occupied.push({ x: room.x, y: room.y, w: room.w, h: room.h })
 }

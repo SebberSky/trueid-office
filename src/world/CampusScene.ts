@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { WorldMap } from './terrain'
-import { MAP_H, MAP_W, TILE, isWaterAt, roomAt, roomDoor } from './terrain'
+import { MAP_H, MAP_W, TILE, isWaterAt, roomAt, roomDoor, tileAt } from './terrain'
 import { TERRAIN_HEIGHT, TERRAIN_HEX, surfaceY, toWorldXZ } from './heights'
 import { Character3D } from '../character/Character3D'
 import type { CharacterLook, Facing, PeerPresence, RoomDef } from '../types'
@@ -37,6 +37,9 @@ export class CampusScene {
   private peers = new Map<string, Character3D>()
   private peerMotion = new Map<string, PeerMotion>()
   private waterMeshes: THREE.Mesh[] = []
+  private waterMap: THREE.CanvasTexture | null = null
+  private waterNormal: THREE.CanvasTexture | null = null
+  private waterMat: THREE.MeshStandardMaterial | null = null
   private roofs = new Map<string, THREE.Group>()
   /** Wall + trim + door frame shells — sink / fade when local player is inside. */
   private roomWalls = new Map<string, THREE.Group>()
@@ -58,11 +61,6 @@ export class CampusScene {
   /** Camera look-at offset from the player (tile units). Set via minimap drag. */
   private camPanX = 0
   private camPanZ = 0
-  private moveMarker: THREE.Mesh | null = null
-  private readonly pickRay = new THREE.Raycaster()
-  private readonly pickNdc = new THREE.Vector2()
-  private readonly groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0)
-  private readonly pickHit = new THREE.Vector3()
   private readonly headWorld = new THREE.Vector3()
   private readonly headNdc = new THREE.Vector3()
   private fishingGroup = new THREE.Group()
@@ -190,29 +188,73 @@ export class CampusScene {
         }
 
         if (type === 'water') {
-          // Opaque bed so green underlay never shows through
+          if (!this.waterMat) {
+            const { map: wMap, normal } = makeWaterTextures()
+            this.waterMap = wMap
+            this.waterNormal = normal
+            this.waterMat = new THREE.MeshStandardMaterial({
+              map: wMap,
+              normalMap: normal,
+              normalScale: new THREE.Vector2(0.85, 0.85),
+              color: 0x4eb8e8,
+              roughness: 0.12,
+              metalness: 0.45,
+              transparent: true,
+              opacity: 0.72,
+              depthWrite: false,
+              envMapIntensity: 1.2,
+            })
+          }
+
+          // Deep pond bed — teal/green so shallows read as water depth
           const bed = new THREE.Mesh(
-            new THREE.BoxGeometry(T, 0.18, T),
-            new THREE.MeshStandardMaterial({ color: 0x1a5f7a, roughness: 0.95 }),
+            new THREE.BoxGeometry(T, 0.22, T),
+            new THREE.MeshStandardMaterial({
+              color: n % 3 === 0 ? 0x0d4a5c : n % 3 === 1 ? 0x0a3d52 : 0x125a4a,
+              roughness: 0.92,
+              metalness: 0.05,
+            }),
           )
-          bed.position.set(tx + 0.5, -0.42, ty + 0.5)
+          bed.position.set(tx + 0.5, -0.48, ty + 0.5)
           bed.receiveShadow = true
           ground.add(bed)
 
-          const mesh = new THREE.Mesh(
-            new THREE.BoxGeometry(T, 0.2, T),
-            new THREE.MeshStandardMaterial({
-              color: 0x3a9fd0,
-              roughness: 0.15,
-              metalness: 0.22,
-              transparent: true,
-              opacity: 0.88,
-            }),
-          )
-          mesh.position.set(tx + 0.5, h, ty + 0.5)
+          // Flat surface so ponds read as a continuous sheet, not stacked bricks
+          const mesh = new THREE.Mesh(new THREE.PlaneGeometry(T * 1.02, T * 1.02), this.waterMat)
+          mesh.rotation.x = -Math.PI / 2
+          mesh.position.set(tx + 0.5, h + 0.02, ty + 0.5)
           mesh.receiveShadow = true
+          // Stagger UVs so ripples don't tile as identical stamps
+          const uvs = mesh.geometry.attributes.uv
+          for (let i = 0; i < uvs.count; i++) {
+            uvs.setXY(i, uvs.getX(i) * 0.55 + tx * 0.37, uvs.getY(i) * 0.55 + ty * 0.41)
+          }
+          uvs.needsUpdate = true
           ground.add(mesh)
           this.waterMeshes.push(mesh)
+
+          // Soft foam along land edges
+          const shore =
+            tileAt(map, tx - 1, ty) !== 'water' ||
+            tileAt(map, tx + 1, ty) !== 'water' ||
+            tileAt(map, tx, ty - 1) !== 'water' ||
+            tileAt(map, tx, ty + 1) !== 'water'
+          if (shore) {
+            const foam = new THREE.Mesh(
+              new THREE.PlaneGeometry(T * 0.92, T * 0.92),
+              new THREE.MeshStandardMaterial({
+                color: 0xd8f0ff,
+                transparent: true,
+                opacity: 0.22,
+                roughness: 0.55,
+                depthWrite: false,
+              }),
+            )
+            foam.rotation.x = -Math.PI / 2
+            foam.position.set(tx + 0.5, h + 0.035, ty + 0.5)
+            ground.add(foam)
+          }
+
           // lily / foam accents
           if (n % 9 === 0) {
             const pad = new THREE.Mesh(
@@ -718,6 +760,12 @@ export class CampusScene {
     return { x: this.camPanX, z: this.camPanZ }
   }
 
+  /** Snap look-at back onto the player (minimap frame centers the avatar). */
+  resetCameraPan() {
+    this.camPanX = 0
+    this.camPanZ = 0
+  }
+
   /** Pan the camera look-at away from the player (tile units). */
   setCameraPan(panX: number, panZ: number, playerPx: number, playerPy: number) {
     let focusTx = playerPx / TILE + panX
@@ -743,52 +791,6 @@ export class CampusScene {
       playerTx: playerPx / TILE,
       playerTz: playerPy / TILE,
     }
-  }
-
-  /** Raycast from screen coords to the ground plane (returns map pixel coords). */
-  pickGround(clientX: number, clientY: number, canvas: HTMLCanvasElement): { x: number; y: number } | null {
-    const rect = canvas.getBoundingClientRect()
-    if (rect.width <= 0 || rect.height <= 0) return null
-    this.pickNdc.set(
-      ((clientX - rect.left) / rect.width) * 2 - 1,
-      -((clientY - rect.top) / rect.height) * 2 + 1,
-    )
-    this.pickRay.setFromCamera(this.pickNdc, this.camera)
-    const hit = this.pickRay.ray.intersectPlane(this.groundPlane, this.pickHit)
-    if (!hit) return null
-    const px = hit.x * TILE
-    const py = hit.z * TILE
-    if (px < TILE * 0.5 || py < TILE * 0.5 || px > MAP_W * TILE - TILE * 0.5 || py > MAP_H * TILE - TILE * 0.5) {
-      return null
-    }
-    return { x: px, y: py }
-  }
-
-  setMoveMarker(px: number | null, py: number | null) {
-    if (!this.moveMarker) {
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.32, 0.48, 32),
-        new THREE.MeshBasicMaterial({
-          color: 0xfbbf24,
-          transparent: true,
-          opacity: 0.9,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-        }),
-      )
-      ring.rotation.x = -Math.PI / 2
-      ring.visible = false
-      ring.renderOrder = 10
-      this.moveMarker = ring
-      this.scene.add(ring)
-    }
-    if (px == null || py == null) {
-      this.moveMarker.visible = false
-      return
-    }
-    const { x, z } = toWorldXZ(px, py)
-    this.moveMarker.position.set(x, 0.16, z)
-    this.moveMarker.visible = true
   }
 
   /** Visual hop for the local player (Space). */
@@ -964,8 +966,13 @@ export class CampusScene {
   ) {
     this.clock += dt
     this.lastLocalPos = { x: px, y: py, facing }
+    if (this.waterMap && this.waterNormal) {
+      const drift = this.clock * 0.045
+      this.waterMap.offset.set(drift * 0.7, Math.sin(this.clock * 0.35) * 0.08 + drift * 0.4)
+      this.waterNormal.offset.set(drift * 0.55, -drift * 0.65)
+    }
     for (const w of this.waterMeshes) {
-      w.position.y = TERRAIN_HEIGHT.water + Math.sin(this.clock * 2 + w.position.x) * 0.03
+      w.position.y = TERRAIN_HEIGHT.water + 0.02 + Math.sin(this.clock * 1.6 + w.position.x * 1.3 + w.position.z) * 0.018
     }
 
     const { x, z } = toWorldXZ(px, py)
@@ -1081,6 +1088,9 @@ export class CampusScene {
     ;(this.fishingLine?.material as THREE.Material | undefined)?.dispose()
     this.fishingBobber?.geometry.dispose()
     ;(this.fishingBobber?.material as THREE.Material | undefined)?.dispose()
+    this.waterMat?.dispose()
+    this.waterMap?.dispose()
+    this.waterNormal?.dispose()
     this.renderer.dispose()
   }
 }
@@ -1379,4 +1389,90 @@ function makeSignMaterial(text: string, color: string) {
     polygonOffsetFactor: -2,
     polygonOffsetUnits: -2,
   })
+}
+
+/** Procedural pond maps — soft ripples + caustic mottling + tangent normals. */
+function makeWaterTextures() {
+  const size = 128
+  const height = new Float32Array(size * size)
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const nx = x / size
+      const ny = y / size
+      const r1 = Math.sin(nx * Math.PI * 6.2 + ny * 2.1) * Math.cos(ny * Math.PI * 5.4)
+      const r2 = Math.sin((nx + ny) * Math.PI * 9.5) * 0.55
+      const r3 = Math.sin(nx * Math.PI * 14 - ny * Math.PI * 11) * 0.28
+      height[y * size + x] = r1 + r2 + r3
+    }
+  }
+
+  const colorCanvas = document.createElement('canvas')
+  colorCanvas.width = size
+  colorCanvas.height = size
+  const cctx = colorCanvas.getContext('2d')!
+  const cimg = cctx.createImageData(size, size)
+
+  const normalCanvas = document.createElement('canvas')
+  normalCanvas.width = size
+  normalCanvas.height = size
+  const nctx = normalCanvas.getContext('2d')!
+  const nimg = nctx.createImageData(size, size)
+
+  const sample = (x: number, y: number) => height[((y + size) % size) * size + ((x + size) % size)]
+
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4
+      const h = sample(x, y)
+      const t = (h + 2.2) / 4.4
+      // Deep teal → bright cyan mottling (reads as caustics from above)
+      const r = Math.round(18 + t * 70 + Math.max(0, h) * 28)
+      const g = Math.round(95 + t * 95 + Math.max(0, h) * 40)
+      const b = Math.round(145 + t * 90)
+      cimg.data[i] = Math.min(255, r)
+      cimg.data[i + 1] = Math.min(255, g)
+      cimg.data[i + 2] = Math.min(255, b)
+      cimg.data[i + 3] = 255
+
+      const dx = sample(x + 1, y) - sample(x - 1, y)
+      const dy = sample(x, y + 1) - sample(x, y - 1)
+      const nx = -dx * 1.8
+      const ny = -dy * 1.8
+      const nz = 1
+      const len = Math.hypot(nx, ny, nz) || 1
+      nimg.data[i] = Math.round(((nx / len) * 0.5 + 0.5) * 255)
+      nimg.data[i + 1] = Math.round(((ny / len) * 0.5 + 0.5) * 255)
+      nimg.data[i + 2] = Math.round(((nz / len) * 0.5 + 0.5) * 255)
+      nimg.data[i + 3] = 255
+    }
+  }
+  cctx.putImageData(cimg, 0, 0)
+  nctx.putImageData(nimg, 0, 0)
+
+  // Soft highlight rings on top of the color map
+  cctx.globalCompositeOperation = 'lighter'
+  for (let i = 0; i < 7; i++) {
+    const cx = ((i * 47) % size) + 8
+    const cy = ((i * 73) % size) + 8
+    const rad = 10 + (i % 4) * 5
+    const g = cctx.createRadialGradient(cx, cy, 1, cx, cy, rad)
+    g.addColorStop(0, 'rgba(200, 245, 255, 0.35)')
+    g.addColorStop(0.45, 'rgba(120, 200, 240, 0.12)')
+    g.addColorStop(1, 'rgba(0, 0, 0, 0)')
+    cctx.fillStyle = g
+    cctx.beginPath()
+    cctx.arc(cx, cy, rad, 0, Math.PI * 2)
+    cctx.fill()
+  }
+
+  const map = new THREE.CanvasTexture(colorCanvas)
+  map.wrapS = map.wrapT = THREE.RepeatWrapping
+  map.colorSpace = THREE.SRGBColorSpace
+  map.anisotropy = 4
+
+  const normal = new THREE.CanvasTexture(normalCanvas)
+  normal.wrapS = normal.wrapT = THREE.RepeatWrapping
+  normal.anisotropy = 4
+
+  return { map, normal }
 }

@@ -156,3 +156,21 @@
   background: rgba(200, 16, 46, 0.4);
   border-color: rgba(252, 165, 165, 0.7);
 }
+
+@media (max-width: 800px) {
+  .roster {
+    left: auto;
+    right: 0;
+    min-width: min(240px, 88vw);
+    max-height: min(280px, 45vh);
+  }
+
+  .world__online-btn,
+  .world__room-btn {
+    font-size: 0.72rem;
+  }
+
+  .world__room-btn {
+    padding: 0.2rem 0.5rem;
+  }
+}

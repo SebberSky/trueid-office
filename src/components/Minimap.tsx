@@ -2,7 +2,7 @@ import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 import type { CampusScene } from '../world/CampusScene'
 import type { WorldMap } from '../world/terrain'
-import { MAP_H, MAP_W, TERRAIN_COLOR, TILE } from '../world/terrain'
+import { MAP_H, MAP_W, TERRAIN_COLOR } from '../world/terrain'
 import './Minimap.css'
 
 const MM_W = 168
@@ -12,10 +12,9 @@ type Props = {
   map: WorldMap
   sceneRef: RefObject<CampusScene | null>
   playerRef: RefObject<{ x: number; y: number }>
-  moveTargetRef: RefObject<{ x: number; y: number } | null>
 }
 
-export function Minimap({ map, sceneRef, playerRef, moveTargetRef }: Props) {
+export function Minimap({ map, sceneRef, playerRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const dragRef = useRef<{ startTx: number; startTy: number; panX: number; panZ: number } | null>(
     null,
@@ -73,14 +72,6 @@ export function Minimap({ map, sceneRef, playerRef, moveTargetRef }: Props) {
       ctx.lineWidth = 2
       ctx.strokeRect(vx + 1, vy + 1, vw - 2, vh - 2)
 
-      const target = moveTargetRef.current
-      if (target) {
-        ctx.fillStyle = '#fbbf24'
-        ctx.beginPath()
-        ctx.arc((target.x / TILE) * tw, (target.y / TILE) * th, 3, 0, Math.PI * 2)
-        ctx.fill()
-      }
-
       ctx.fillStyle = '#4ade80'
       ctx.strokeStyle = '#14532d'
       ctx.lineWidth = 1.5
@@ -93,7 +84,7 @@ export function Minimap({ map, sceneRef, playerRef, moveTargetRef }: Props) {
     }
     raf = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(raf)
-  }, [sceneRef, playerRef, moveTargetRef])
+  }, [sceneRef, playerRef])
 
   const clientToTile = (clientX: number, clientY: number) => {
     const el = canvasRef.current!
@@ -106,21 +97,15 @@ export function Minimap({ map, sceneRef, playerRef, moveTargetRef }: Props) {
 
   const onPointerDown = (e: React.PointerEvent) => {
     e.preventDefault()
+    e.stopPropagation()
     const scene = sceneRef.current
     const player = playerRef.current
     if (!scene || !player) return
     canvasRef.current?.setPointerCapture(e.pointerId)
     const { tx, ty } = clientToTile(e.clientX, e.clientY)
-    const view = scene.getViewExtents(player.x, player.y)
-    const inView =
-      tx >= view.focusTx - view.halfW &&
-      tx <= view.focusTx + view.halfW &&
-      ty >= view.focusTz - view.halfH &&
-      ty <= view.focusTz + view.halfH
-    if (inView) {
-      const pan = scene.getCameraPan()
-      dragRef.current = { startTx: tx, startTy: ty, panX: pan.x, panZ: pan.z }
-    }
+    const pan = scene.getCameraPan()
+    // Drag anywhere on the minimap to free-look (frame stays until move controls)
+    dragRef.current = { startTx: tx, startTy: ty, panX: pan.x, panZ: pan.z }
   }
 
   const onPointerMove = (e: React.PointerEvent) => {
@@ -142,7 +127,7 @@ export function Minimap({ map, sceneRef, playerRef, moveTargetRef }: Props) {
   }
 
   return (
-    <div className="minimap" title="ลากกรอบขาวเพื่อเลื่อนมุมมอง">
+    <div className="minimap" title="ลากเพื่อเลื่อนมุมมอง · กดเดินเพื่อกลับมาที่ตัวละคร">
       <canvas
         ref={canvasRef}
         width={MM_W}
