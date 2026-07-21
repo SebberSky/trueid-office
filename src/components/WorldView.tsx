@@ -1328,6 +1328,18 @@ export function WorldView() {
                 const zoneIds = [...new Set(fgZoneIds)]
                 window.setTimeout(() => {
                   netRef.current?.send({ type: 'fallguys-start', zoneIds })
+                  void fetch('/api/fallguys/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: session.id, zoneIds }),
+                  })
+                    .then(async (res) => {
+                      const data = (await res.json()) as { ok?: boolean; error?: string }
+                      if (!res.ok || !data.ok) {
+                        setLobbyError(data.error || `HTTP start failed (${res.status})`)
+                      }
+                    })
+                    .catch((err) => setLobbyError(String(err)))
                 }, 80)
               }}
             >
@@ -1362,6 +1374,33 @@ export function WorldView() {
                 window.setTimeout(() => {
                   netRef.current?.send({ type: 'xo-start', zoneIds })
                   console.info('[xo] sent xo-start', { zoneIds })
+                  // HTTP path — reliable when WS client→server frames never reach Node.
+                  void fetch('/api/xo/start', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id: session.id, zoneIds }),
+                  })
+                    .then(async (res) => {
+                      const data = (await res.json()) as {
+                        ok?: boolean
+                        error?: string
+                        build?: string
+                        xo?: { phase?: string; zone?: unknown[] }
+                      }
+                      console.info('[xo] http start', res.status, data)
+                      if (!res.ok || !data.ok) {
+                        setLobbyError(
+                          data.error ||
+                            `HTTP start failed (${res.status}) build=${data.build ?? '?'}`,
+                        )
+                      } else if (data.build) {
+                        setLobbyError(null)
+                      }
+                    })
+                    .catch((err) => {
+                      console.warn('[xo] http start error', err)
+                      setLobbyError(`HTTP start error: ${String(err)}`)
+                    })
                 }, 80)
               }}
             >

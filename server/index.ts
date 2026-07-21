@@ -23,7 +23,7 @@ import {
 
 const PORT = Number(process.env.PORT || 3001)
 /** Bump when diagnosing deploy/stale-process issues. */
-const BUILD_TAG = 'xo-ack-20260721'
+const BUILD_TAG = 'xo-http-20260721'
 const STALE_MS = 5000
 const PIN_TEXT_MAX = 280
 /** Debounce disk writes while walking. */
@@ -217,11 +217,76 @@ const server = http.createServer(async (req, res) => {
     return
   }
 
+  // HTTP fallback for game start — used when WS client→server frames never reach the handler
+  // (presence may still work while xo-start does not; /api proxy is more reliable).
+  if (req.method === 'POST' && url.pathname === '/api/xo/start') {
+    try {
+      const body = JSON.parse(await readBody(req)) as { id?: string; zoneIds?: string[] }
+      const id = String(body.id || '').trim()
+      const client = [...clients].find((c) => c.id === id && c.ws.readyState === 1)
+      const deps = { clients, send, broadcast }
+      if (!client) {
+        res.writeHead(409, { 'Content-Type': 'application/json' })
+        res.end(
+          JSON.stringify({
+            ok: false,
+            error: 'player not connected on WS',
+            build: BUILD_TAG,
+            xo: xoDebugState(deps),
+          }),
+        )
+        return
+      }
+      send(client.ws, {
+        type: 'xo-ack',
+        ok: true,
+        phase: 'http-received',
+        zone: xoDebugState(deps).zone.length,
+        detail: `http id=${id} build=${BUILD_TAG}`,
+      })
+      handleXoMsg(deps, client, {
+        type: 'xo-start',
+        zoneIds: Array.isArray(body.zoneIds) ? body.zoneIds.map(String) : undefined,
+      })
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, build: BUILD_TAG, xo: xoDebugState(deps) }))
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: false, error: String(err), build: BUILD_TAG }))
+    }
+    return
+  }
+
+  if (req.method === 'POST' && url.pathname === '/api/fallguys/start') {
+    try {
+      const body = JSON.parse(await readBody(req)) as { id?: string; zoneIds?: string[] }
+      const id = String(body.id || '').trim()
+      const client = [...clients].find((c) => c.id === id && c.ws.readyState === 1)
+      const deps = { clients, send, broadcast }
+      if (!client) {
+        res.writeHead(409, { 'Content-Type': 'application/json' })
+        res.end(JSON.stringify({ ok: false, error: 'player not connected on WS', build: BUILD_TAG }))
+        return
+      }
+      handleFallGuysMsg(deps, client, {
+        type: 'fallguys-start',
+        zoneIds: Array.isArray(body.zoneIds) ? body.zoneIds.map(String) : undefined,
+      })
+      res.writeHead(200, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: true, build: BUILD_TAG }))
+    } catch (err) {
+      res.writeHead(500, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ ok: false, error: String(err), build: BUILD_TAG }))
+    }
+    return
+  }
+
   res.writeHead(404)
   res.end('Not found')
 })
 
-const wss = new WebSocketServer({ server, path: '/ws' })
+// Accept /ws and bare / — some proxies rewrite the path on upgrade.
+const wss = new WebSocketServer({ server })
 
 wss.on('connection', (ws) => {
   const client: Client = { ws, id: null, email: null, peer: null }
@@ -235,6 +300,8 @@ wss.on('connection', (ws) => {
       send(ws, { type: 'error', message: 'invalid json' })
       return
     }
+
+    console.info('[ws] inbound', msg.type, 'id=', client.id, 'build=', BUILD_TAG)
 
     if (msg.type === 'hello') {
       const email = String(msg.email || '')
