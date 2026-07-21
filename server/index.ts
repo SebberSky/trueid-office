@@ -41,7 +41,7 @@ const clients = new Set<Client>()
 const lockedRooms = new Map<string, { byId: string; byName: string }>()
 /** One pinned chat message per room (any room including plaza). */
 const pinnedByRoom = new Map<string, PinnedMessage>()
-const UNLOCKABLE = new Set(['plaza-main', 'fallguys-arena'])
+const UNLOCKABLE = new Set(['plaza-main', 'fallguys-arena', 'xo-booth'])
 
 function send(ws: WebSocket, msg: ServerMsg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
@@ -384,6 +384,27 @@ wss.on('connection', (ws) => {
 
     if (msg.type === 'chat') {
       broadcast({ type: 'chat', message: msg.message })
+      return
+    }
+
+    if (msg.type === 'dm') {
+      if (!client.id) return
+      const m = msg.message
+      if (!m?.toId || !m.text?.trim()) return
+      // Only relay to the intended peer (and never broadcast campus-wide)
+      const payload = {
+        ...m,
+        fromId: client.id,
+        fromName: (m.fromName || client.peer?.look?.displayName || 'guest').slice(0, 32),
+        text: String(m.text).trim().slice(0, 280),
+        at: typeof m.at === 'number' ? m.at : Date.now(),
+      }
+      for (const c of clients) {
+        if (c.id === payload.toId && c.ws.readyState === c.ws.OPEN) {
+          send(c.ws, { type: 'dm', message: payload })
+          break
+        }
+      }
       return
     }
 

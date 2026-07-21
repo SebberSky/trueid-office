@@ -1,5 +1,5 @@
 import type { CharacterLook, Facing, PeerPresence } from '../src/types'
-import type { ChatMessage, PinnedMessage } from '../src/chat/types'
+import type { ChatMessage, DmMessage, PinnedMessage } from '../src/chat/types'
 import type { ActivityEvent } from '../src/chat/RoomActivity'
 import type { SignalData } from '../src/presence/bus'
 import type {
@@ -26,6 +26,7 @@ export type ClientMsg =
   | { type: 'leave'; id: string }
   | { type: 'signal'; to: string; data: SignalData }
   | { type: 'chat'; message: ChatMessage }
+  | { type: 'dm'; message: DmMessage }
   | { type: 'activity'; event: ActivityEvent }
   | { type: 'room-lock'; roomId: string; locked: boolean }
   | {
@@ -61,6 +62,7 @@ export type ServerMsg =
   | { type: 'leave'; id: string }
   | { type: 'signal'; from: string; data: SignalData }
   | { type: 'chat'; message: ChatMessage }
+  | { type: 'dm'; message: DmMessage }
   | { type: 'activity'; event: ActivityEvent }
   | { type: 'room-lock'; roomId: string; locked: boolean; byId: string; byName: string }
   | {
@@ -85,3 +87,4 @@ export type ServerMsg =
   | { type: 'error'; message: string }
 
 export type { SignalData, CharacterLook, PeerPresence, ChatMessage, PinnedMessage, ActivityEvent }
+export type { DmMessage } from '../src/chat/types'

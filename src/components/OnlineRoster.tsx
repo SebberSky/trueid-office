@@ -9,6 +9,8 @@ export type RosterPerson = {
   voiceOn?: boolean
   sharing?: boolean
   isSelf?: boolean
+  /** Unread DM count from this person. */
+  dmUnread?: number
 }
 
 interface Props {
@@ -18,9 +20,11 @@ interface Props {
   onClose: () => void
   /** Anchor element for click-outside (optional). */
   anchorRef?: RefObject<HTMLElement | null>
+  /** Start a private chat (server roster). */
+  onStartDm?: (person: RosterPerson) => void
 }
 
-export function OnlineRoster({ open, title, people, onClose, anchorRef }: Props) {
+export function OnlineRoster({ open, title, people, onClose, anchorRef, onStartDm }: Props) {
   const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -59,14 +63,42 @@ export function OnlineRoster({ open, title, people, onClose, anchorRef }: Props)
         <ul className="roster__list">
           {people.map((p) => (
             <li key={p.id} className={p.isSelf ? 'is-self' : undefined}>
-              <div className="roster__name">
-                <span>{p.name}</span>
-                {p.isSelf && <em>คุณ</em>}
-              </div>
-              <div className="roster__meta">
-                {p.roomLabel ? <span className="roster__room">{p.roomLabel}</span> : null}
-                {p.voiceOn ? <span title="ไมค์เปิด">🎙</span> : null}
-                {p.sharing ? <span title="กำลังแชร์จอ">🖥</span> : null}
+              <div className="roster__row">
+                <div className="roster__info">
+                  <div className="roster__name">
+                    <span>{p.name}</span>
+                    {p.isSelf && <em>คุณ</em>}
+                  </div>
+                  <div className="roster__meta">
+                    {p.roomLabel ? <span className="roster__room">{p.roomLabel}</span> : null}
+                    {p.voiceOn ? <span title="ไมค์เปิด">🎙</span> : null}
+                    {p.sharing ? <span title="กำลังแชร์จอ">🖥</span> : null}
+                  </div>
+                </div>
+                {onStartDm && !p.isSelf && (
+                  <button
+                    type="button"
+                    className="roster__dm"
+                    title={`แชทส่วนตัวกับ ${p.name}`}
+                    aria-label={`แชทส่วนตัวกับ ${p.name}`}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      onStartDm(p)
+                    }}
+                  >
+                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                      <path
+                        fill="currentColor"
+                        d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"
+                      />
+                    </svg>
+                    {(p.dmUnread ?? 0) > 0 && (
+                      <span className="roster__dm-badge">
+                        {p.dmUnread! > 9 ? '9+' : p.dmUnread}
+                      </span>
+                    )}
+                  </button>
+                )}
               </div>
             </li>
           ))}
