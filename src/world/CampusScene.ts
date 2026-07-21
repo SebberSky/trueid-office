@@ -856,7 +856,7 @@ export class CampusScene {
       const y = surfaceY(map, motion.x, motion.y)
       const overWater =
         canFlyOverWater(p.look) && isWaterAt(map, motion.x, motion.y)
-      avatar.setPose(x, z, y, motion.facing, moving, dt, overWater)
+      avatar.setPose(x, z, y, motion.facing, moving, dt, overWater, !!p.crouching)
     }
     for (const [id, avatar] of this.peers) {
       if (!seen.has(id)) {
@@ -875,6 +875,7 @@ export class CampusScene {
     facing: Facing,
     moving: boolean,
     dt: number,
+    crouching = false,
   ) {
     this.clock += dt
     this.lastLocalPos = { x: px, y: py, facing }
@@ -885,7 +886,7 @@ export class CampusScene {
     const { x, z } = toWorldXZ(px, py)
     const y = surfaceY(map, px, py)
     const overWater = isWaterAt(map, px, py)
-    this.player.setPose(x, z, y, facing, moving, dt, overWater)
+    this.player.setPose(x, z, y, facing, moving, dt, overWater, crouching)
     this.updateFishingVisual(dt)
 
     // Soften / sink roof + walls when inside so the character stays visible

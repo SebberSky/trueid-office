@@ -119,6 +119,8 @@ export interface PeerPresence {
   jumpAt?: number
   /** Timestamp of last dragon fire breath — remotes replay the VFX when this changes. */
   fireAt?: number
+  /** Holding crouch (Ctrl) — remotes mirror the squat pose. */
+  crouching?: boolean
   updatedAt: number
 }
 

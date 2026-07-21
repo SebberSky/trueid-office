@@ -68,6 +68,9 @@ export class Character3D {
   private wingR: THREE.Object3D | null = null
   private segments: THREE.Object3D[] = []
   private restY = 0
+  private labelBaseY = 2.4
+  private baseScale = 0.55
+  private crouchAmt = 0
   private fireT = 0
   private fireGroup: THREE.Group | null = null
   /** Charred look: hold black, then fade back to original colors. */
@@ -92,10 +95,11 @@ export class Character3D {
 
     this.labelName = (look.displayName || 'guest').slice(0, 10)
     this.label = makeNameSprite(this.labelName, false)
-    this.label.position.y = labelYFor(this.animalKind, this.gait)
+    this.labelBaseY = labelYFor(this.animalKind, this.gait)
+    this.label.position.y = this.labelBaseY
     this.root.add(this.label)
 
-    const baseScale =
+    this.baseScale =
       this.animalKind === 'dragon'
         ? 0.88
         : this.animalKind === 'snake'
@@ -103,7 +107,7 @@ export class Character3D {
           : this.animalKind === 'yoda'
             ? 0.48
             : 0.55
-    this.root.scale.setScalar(baseScale)
+    this.root.scale.setScalar(this.baseScale)
   }
 
   private buildHuman(look: CharacterLook) {
@@ -547,10 +551,12 @@ export class Character3D {
     moving: boolean,
     dt: number,
     overWater = false,
+    crouching = false,
   ) {
     this.stepJump(dt)
     this.stepFire(dt)
     this.stepBurn(dt)
+    this.stepCrouch(dt, crouching)
     this.root.position.set(px, py + this.jumpY, pz)
     const yaw =
       facing === 'down' ? 0 : facing === 'up' ? Math.PI : facing === 'left' ? -Math.PI / 2 : Math.PI / 2
@@ -566,6 +572,20 @@ export class Character3D {
     } else {
       this.settle()
     }
+    // Crouch label offset after gait code which may rewrite label Y
+    if (this.crouchAmt > 0.001) {
+      this.label.position.y *= 1 - this.crouchAmt * 0.38
+    }
+  }
+
+  private stepCrouch(dt: number, crouching: boolean) {
+    const target = crouching ? 1 : 0
+    this.crouchAmt += (target - this.crouchAmt) * Math.min(1, dt * 14)
+    if (Math.abs(this.crouchAmt - target) < 0.001) this.crouchAmt = target
+    // Squash toward the feet; keep footprint width so it still reads as a crouch
+    const sy = 1 - this.crouchAmt * 0.45
+    const sxz = 1 + this.crouchAmt * 0.08
+    this.body.scale.set(sxz, sy, sxz)
   }
 
   private stepJump(dt: number) {
