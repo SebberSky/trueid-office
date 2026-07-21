@@ -20,6 +20,7 @@ import { OnlineRoster, type RosterPerson } from './OnlineRoster'
 import { FishingCatchOverlay } from './FishingCatch'
 import { FallGuysGame } from './FallGuysGame'
 import { MobileControls } from './MobileControls'
+import { Minimap } from './Minimap'
 import {
   FISH_CATCH_SHOW_MS,
   randomFishWaitMs,
@@ -71,6 +72,7 @@ export function WorldView() {
   const globalChatRef = useRef<GlobalChatBus | null>(null)
   const activityRef = useRef<RoomActivityBus | null>(null)
   const sceneRef = useRef<CampusScene | null>(null)
+  const moveTargetRef = useRef<{ x: number; y: number } | null>(null)
   const lookRef = useRef(session.look)
   lookRef.current = session.look
   const netRef = useRef<OfficeSocket | null>(null)
@@ -577,12 +579,25 @@ export function WorldView() {
     }
     wrap.addEventListener('wheel', onWheel, { passive: false })
 
+    const onContextMenu = (e: MouseEvent) => e.preventDefault()
+    const onCanvasPointerDown = (e: PointerEvent) => {
+      if (e.button !== 2) return
+      if (!worldActiveRef.current || fgRoleRef.current !== 'none') return
+      e.preventDefault()
+      const hit = scene.pickGround(e.clientX, e.clientY, canvas)
+      if (hit) {
+        moveTargetRef.current = hit
+        scene.setMoveMarker(hit.x, hit.y)
+      }
+    }
+    canvas.addEventListener('contextmenu', onContextMenu)
+    canvas.addEventListener('pointerdown', onCanvasPointerDown)
+
     const canFly = canFlyOverWater(session.look)
 
-    const tryMove = (nx: number, ny: number) => {
+    const canMoveTo = (nx: number, ny: number) => {
       let x = nx
       let y = ny
-      // Racers stay on the pink pad until they quit the overlay
       if (fgRoleRef.current === 'player') {
         const fg = map.rooms.find((r) => r.id === FALLGUYS_ROOM_ID)
         if (fg) {
@@ -602,20 +617,25 @@ export function WorldView() {
       for (const [sx, sy] of samples) {
         const tx = Math.floor(sx / TILE)
         const ty = Math.floor(sy / TILE)
-        if (!canTraverse(map, tx, ty, canFly)) return
+        if (!canTraverse(map, tx, ty, canFly)) return false
       }
       const prevRoom = roomAt(map, pos.current.x, pos.current.y)
       const nextRoom = roomAt(map, x, y)
-      if (fgRoleRef.current === 'player' && nextRoom?.id !== FALLGUYS_ROOM_ID) return
+      if (fgRoleRef.current === 'player' && nextRoom?.id !== FALLGUYS_ROOM_ID) return false
       if (nextRoom && (!prevRoom || prevRoom.id !== nextRoom.id)) {
-        if (lockedRoomsRef.current.has(nextRoom.id)) return
+        if (lockedRoomsRef.current.has(nextRoom.id)) return false
         if (!isUnlimited(nextRoom)) {
           const others = peersRef.current.filter((p) => p.roomId === nextRoom.id).length
-          if (others + 1 > nextRoom.capacity) return
+          if (others + 1 > nextRoom.capacity) return false
         }
       }
-      pos.current.x = x
-      pos.current.y = y
+      return true
+    }
+
+    const tryMove = (nx: number, ny: number) => {
+      if (!canMoveTo(nx, ny)) return
+      pos.current.x = nx
+      pos.current.y = ny
     }
 
     const maintainMedia = (now: number) => {
@@ -697,6 +717,8 @@ export function WorldView() {
       const crouching = crouchingRef.current
       let moving = false
       if (dx !== 0 || dy !== 0) {
+        moveTargetRef.current = null
+        scene.setMoveMarker(null, null)
         const len = Math.hypot(dx, dy) || 1
         dx /= len
         dy /= len
@@ -706,6 +728,32 @@ export function WorldView() {
         tryMove(pos.current.x + dx * step, pos.current.y)
         tryMove(pos.current.x, pos.current.y + dy * step)
         moving = true
+      } else {
+        const target = moveTargetRef.current
+        if (target && fgRoleRef.current === 'none') {
+          const tdx = target.x - pos.current.x
+          const tdy = target.y - pos.current.y
+          const dist = Math.hypot(tdx, tdy)
+          if (dist < 6) {
+            moveTargetRef.current = null
+            scene.setMoveMarker(null, null)
+          } else {
+            const step = SPEED * (crouching ? 0.45 : 1) * dt
+            const mx = pos.current.x + (tdx / dist) * Math.min(step, dist)
+            const my = pos.current.y + (tdy / dist) * Math.min(step, dist)
+            const prevX = pos.current.x
+            const prevY = pos.current.y
+            tryMove(mx, my)
+            if (pos.current.x !== prevX || pos.current.y !== prevY) {
+              moving = true
+              if (Math.abs(tdx) > Math.abs(tdy)) facing.current = tdx < 0 ? 'left' : 'right'
+              else facing.current = tdy < 0 ? 'up' : 'down'
+            } else {
+              moveTargetRef.current = null
+              scene.setMoveMarker(null, null)
+            }
+          }
+        }
       }
 
       const atEdge = isAtWaterEdge(map, pos.current.x, pos.current.y)
@@ -739,6 +787,8 @@ export function WorldView() {
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', resize)
       wrap.removeEventListener('wheel', onWheel)
+      canvas.removeEventListener('contextmenu', onContextMenu)
+      canvas.removeEventListener('pointerdown', onCanvasPointerDown)
       scene.dispose()
       sceneRef.current = null
     }
@@ -1068,6 +1118,10 @@ export function WorldView() {
 
       <div className="world__stage" ref={wrapRef}>
         <canvas ref={canvasRef} tabIndex={0} />
+        <Minimap map={map} sceneRef={sceneRef} playerRef={pos} moveTargetRef={moveTargetRef} />
+        {fgRole === 'none' && !fishingActive && (
+          <div className="world__move-hint">คลิกขวา เดิน · ลากกรอบมินิแมพ เลื่อนมุมมอง</div>
+        )}
         <FloatingEmojis
           items={floatEmojis}
           getAnchor={(fromId) => {
@@ -1192,15 +1246,23 @@ export function WorldView() {
         {roomId ? (
           <>
             <div className="world__controls">
-              <button type="button" className={voiceOn ? 'on' : ''} onClick={() => void toggleVoice()}>
-                {voiceOn ? 'ปิดไมค์' : 'เปิดไมค์'}
+              <button
+                type="button"
+                className={voiceOn ? 'on' : ''}
+                onClick={() => void toggleVoice()}
+                title={voiceOn ? 'ปิดไมค์' : 'เปิดไมค์'}
+                aria-label={voiceOn ? 'ปิดไมค์' : 'เปิดไมค์'}
+              >
+                {voiceOn ? '🔇' : '🎤'}
               </button>
               <button
                 type="button"
                 className={sharing ? 'on share' : ''}
                 onClick={() => void toggleShare()}
+                title={sharing ? 'หยุดแชร์จอ' : 'แชร์จอ'}
+                aria-label={sharing ? 'หยุดแชร์จอ' : 'แชร์จอ'}
               >
-                {sharing ? 'หยุดแชร์จอ' : 'แชร์จอ'}
+                {sharing ? '⏹️' : '🖥️'}
               </button>
               {canLockRoom && (
                 <button
@@ -1212,8 +1274,9 @@ export function WorldView() {
                       ? 'ปลดล็อก — คนนอกจะเข้าห้องได้อีกครั้ง'
                       : 'ล็อกห้อง — คนนอกเข้าไม่ได้ / ไม่ได้ยินเสียงหรือแชร์จอ'
                   }
+                  aria-label={roomIsLocked ? 'ปลดล็อกห้อง' : 'ล็อกห้อง'}
                 >
-                  {roomIsLocked ? '🔓 ปลดล็อกห้อง' : '🔒 ล็อกห้อง'}
+                  {roomIsLocked ? '🔓' : '🔒'}
                 </button>
               )}
               <button
@@ -1225,9 +1288,10 @@ export function WorldView() {
                     ? 'วงล้อสุ่มชื่อสมาชิกในห้อง'
                     : 'ใช้ได้เมื่อมีสมาชิกในห้องมากกว่า 3 คน'
                 }
+                aria-label="สุ่มชื่อ"
                 onClick={() => setWheelOpen((v) => !v)}
               >
-                🎡 สุ่มชื่อ
+                🎡
               </button>
               {(screenFrom || sharing) && (
                 <>
@@ -1235,15 +1299,19 @@ export function WorldView() {
                     type="button"
                     className={screenFs ? 'on' : ''}
                     onClick={() => setScreenFs((v) => !v)}
+                    title={screenFs ? 'ย่อแชร์จอ' : 'เต็มพื้นที่แมพ'}
+                    aria-label={screenFs ? 'ย่อแชร์จอ' : 'เต็มพื้นที่แมพ'}
                   >
-                    {screenFs ? 'ย่อแชร์จอ' : 'เต็มพื้นที่แมพ'}
+                    {screenFs ? '⤓' : '⛶'}
                   </button>
                   <button
                     type="button"
                     className={recording ? 'on rec' : ''}
                     onClick={() => void toggleRecording()}
+                    title={recording ? 'หยุดอัด · ดาวน์โหลด' : 'อัดภาพ+เสียง'}
+                    aria-label={recording ? 'หยุดอัด' : 'อัดภาพ+เสียง'}
                   >
-                    {recording ? 'หยุดอัด · ดาวน์โหลด' : 'อัดภาพ+เสียง'}
+                    {recording ? '⏹️' : '⏺️'}
                   </button>
                 </>
               )}

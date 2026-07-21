@@ -145,6 +145,22 @@
   color: #e2e8f0;
 }
 
+.world__move-hint {
+  position: absolute;
+  left: 50%;
+  bottom: 12px;
+  transform: translateX(-50%);
+  z-index: 5;
+  pointer-events: none;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: #e2e8f0;
+  background: rgba(15, 23, 42, 0.78);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+}
+
 @media (pointer: coarse), (max-width: 820px) {
   .world__hint--desktop {
     display: none;
@@ -183,8 +199,9 @@
 
 .world__controls {
   display: flex;
-  flex-direction: column;
-  gap: 0.5rem;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 0.35rem;
 }
 
 .world__controls button {
@@ -192,11 +209,23 @@
   background: rgba(255, 255, 255, 0.05);
   color: #e2e8f0;
   border-radius: 10px;
-  padding: 0.7rem 0.85rem;
+  width: 2.35rem;
+  height: 2.35rem;
+  padding: 0;
   font: inherit;
-  font-weight: 600;
+  font-size: 1.05rem;
+  line-height: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
+}
+
+.world__controls button.on {
+  background: rgba(26, 155, 142, 0.25);
+  border-color: #1a9b8e;
+  color: #99f6e4;
 }
 
 .world__controls button:disabled {
@@ -376,7 +405,9 @@
     gap: 0.45rem;
   }
   .world__controls button {
-    padding: 0.55rem 0.7rem;
+    width: 2.5rem;
+    height: 2.5rem;
     min-height: 44px;
+    min-width: 44px;
   }
 }
