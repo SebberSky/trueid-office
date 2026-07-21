@@ -38,8 +38,7 @@ export class CampusScene {
   private peerMotion = new Map<string, PeerMotion>()
   private waterMeshes: THREE.Mesh[] = []
   private waterMap: THREE.CanvasTexture | null = null
-  private waterNormal: THREE.CanvasTexture | null = null
-  private waterMat: THREE.MeshStandardMaterial | null = null
+  private waterMat: THREE.MeshBasicMaterial | null = null
   private roofs = new Map<string, THREE.Group>()
   /** Wall + trim + door frame shells — sink / fade when local player is inside. */
   private roomWalls = new Map<string, THREE.Group>()
@@ -222,44 +221,29 @@ export class CampusScene {
 
         if (type === 'water') {
           if (!this.waterMat) {
-            const { map: wMap, normal } = makeWaterTextures()
-            this.waterMap = wMap
-            this.waterNormal = normal
-            this.waterMat = new THREE.MeshStandardMaterial({
-              map: wMap,
-              normalMap: normal,
-              normalScale: new THREE.Vector2(0.45, 0.45),
-              color: 0x7ad4ff,
-              roughness: 0.28,
-              metalness: 0.05,
+            // Unlit — MeshStandard + sun was crushing ponds to navy; minimap stayed blue.
+            this.waterMap = makeWaterTextures()
+            this.waterMat = new THREE.MeshBasicMaterial({
+              map: this.waterMap,
+              color: 0x6ed4ff,
               transparent: true,
-              opacity: 0.88,
+              opacity: 0.94,
               depthWrite: false,
-              emissive: new THREE.Color(0x3aa8e8),
-              emissiveIntensity: 0.22,
             })
           }
 
-          // Bright pond bed — kept light so water reads as sky-blue, not navy
+          // Bright bed under the sheet (still visible at edges / through opacity)
           const bed = new THREE.Mesh(
-            new THREE.BoxGeometry(T, 0.22, T),
-            new THREE.MeshStandardMaterial({
-              color: n % 3 === 0 ? 0x2a9fd4 : n % 3 === 1 ? 0x2490c8 : 0x1f8ab8,
-              roughness: 0.85,
-              metalness: 0,
-            }),
+            new THREE.BoxGeometry(T, 0.28, T),
+            new THREE.MeshBasicMaterial({ color: 0x4eb8e8 }),
           )
-          bed.position.set(tx + 0.5, -0.48, ty + 0.5)
-          bed.receiveShadow = true
+          bed.position.set(tx + 0.5, -0.4, ty + 0.5)
           ground.add(bed)
 
-          // Flat surface so ponds read as a continuous sheet, not stacked bricks
           const mesh = new THREE.Mesh(new THREE.PlaneGeometry(T * 1.02, T * 1.02), this.waterMat)
           mesh.rotation.x = -Math.PI / 2
-          mesh.position.set(tx + 0.5, h + 0.02, ty + 0.5)
-          // No receiveShadow — cast shadows turn the sheet navy under the sun
+          mesh.position.set(tx + 0.5, h + 0.04, ty + 0.5)
           mesh.receiveShadow = false
-          // Stagger UVs so ripples don't tile as identical stamps
           const uvs = mesh.geometry.attributes.uv
           for (let i = 0; i < uvs.count; i++) {
             uvs.setXY(i, uvs.getX(i) * 0.55 + tx * 0.37, uvs.getY(i) * 0.55 + ty * 0.41)
@@ -268,7 +252,6 @@ export class CampusScene {
           ground.add(mesh)
           this.waterMeshes.push(mesh)
 
-          // Soft foam along land edges
           const shore =
             tileAt(map, tx - 1, ty) !== 'water' ||
             tileAt(map, tx + 1, ty) !== 'water' ||
@@ -277,26 +260,24 @@ export class CampusScene {
           if (shore) {
             const foam = new THREE.Mesh(
               new THREE.PlaneGeometry(T * 0.92, T * 0.92),
-              new THREE.MeshStandardMaterial({
-                color: 0xe8f7ff,
+              new THREE.MeshBasicMaterial({
+                color: 0xeaf8ff,
                 transparent: true,
-                opacity: 0.35,
-                roughness: 0.55,
+                opacity: 0.4,
                 depthWrite: false,
               }),
             )
             foam.rotation.x = -Math.PI / 2
-            foam.position.set(tx + 0.5, h + 0.035, ty + 0.5)
+            foam.position.set(tx + 0.5, h + 0.055, ty + 0.5)
             ground.add(foam)
           }
 
-          // lily / foam accents
           if (n % 9 === 0) {
             const pad = new THREE.Mesh(
               new THREE.CylinderGeometry(0.16, 0.16, 0.04, 8),
               new THREE.MeshStandardMaterial({ color: 0x3d8f45, roughness: 0.85 }),
             )
-            pad.position.set(tx + 0.35 + (n % 3) * 0.12, h + 0.12, ty + 0.4)
+            pad.position.set(tx + 0.35 + (n % 3) * 0.12, h + 0.14, ty + 0.4)
             ground.add(pad)
           }
           continue
@@ -1087,10 +1068,9 @@ export class CampusScene {
   ) {
     this.clock += dt
     this.lastLocalPos = { x: px, y: py, facing }
-    if (this.waterMap && this.waterNormal) {
+    if (this.waterMap) {
       const drift = this.clock * 0.045
       this.waterMap.offset.set(drift * 0.7, Math.sin(this.clock * 0.35) * 0.08 + drift * 0.4)
-      this.waterNormal.offset.set(drift * 0.55, -drift * 0.65)
     }
     for (const w of this.waterMeshes) {
       w.position.y = TERRAIN_HEIGHT.water + 0.02 + Math.sin(this.clock * 1.6 + w.position.x * 1.3 + w.position.z) * 0.018
@@ -1220,7 +1200,6 @@ export class CampusScene {
     }
     this.waterMat?.dispose()
     this.waterMap?.dispose()
-    this.waterNormal?.dispose()
     this.renderer.dispose()
   }
 }
@@ -1561,7 +1540,7 @@ function makeSignMaterial(text: string, color: string) {
   })
 }
 
-/** Procedural pond maps — soft ripples + caustic mottling + tangent normals. */
+/** Procedural pond color map — bright sky-blue ripples (unlit material). */
 function makeWaterTextures() {
   const size = 128
   const height = new Float32Array(size * size)
@@ -1582,12 +1561,6 @@ function makeWaterTextures() {
   const cctx = colorCanvas.getContext('2d')!
   const cimg = cctx.createImageData(size, size)
 
-  const normalCanvas = document.createElement('canvas')
-  normalCanvas.width = size
-  normalCanvas.height = size
-  const nctx = normalCanvas.getContext('2d')!
-  const nimg = nctx.createImageData(size, size)
-
   const sample = (x: number, y: number) => height[((y + size) % size) * size + ((x + size) % size)]
 
   for (let y = 0; y < size; y++) {
@@ -1595,39 +1568,26 @@ function makeWaterTextures() {
       const i = (y * size + x) * 4
       const h = sample(x, y)
       const t = (h + 2.2) / 4.4
-      // Bright sky-blue → cyan highlights (avoid dark navy under outdoor light)
-      const r = Math.round(90 + t * 90 + Math.max(0, h) * 35)
-      const g = Math.round(180 + t * 55 + Math.max(0, h) * 25)
-      const b = Math.round(220 + t * 30)
+      // Keep channels high so unlit water stays sky-blue like the minimap
+      const r = Math.round(110 + t * 80 + Math.max(0, h) * 30)
+      const g = Math.round(195 + t * 45 + Math.max(0, h) * 20)
+      const b = Math.round(235 + t * 20)
       cimg.data[i] = Math.min(255, r)
       cimg.data[i + 1] = Math.min(255, g)
       cimg.data[i + 2] = Math.min(255, b)
       cimg.data[i + 3] = 255
-
-      const dx = sample(x + 1, y) - sample(x - 1, y)
-      const dy = sample(x, y + 1) - sample(x, y - 1)
-      const nx = -dx * 1.8
-      const ny = -dy * 1.8
-      const nz = 1
-      const len = Math.hypot(nx, ny, nz) || 1
-      nimg.data[i] = Math.round(((nx / len) * 0.5 + 0.5) * 255)
-      nimg.data[i + 1] = Math.round(((ny / len) * 0.5 + 0.5) * 255)
-      nimg.data[i + 2] = Math.round(((nz / len) * 0.5 + 0.5) * 255)
-      nimg.data[i + 3] = 255
     }
   }
   cctx.putImageData(cimg, 0, 0)
-  nctx.putImageData(nimg, 0, 0)
 
-  // Soft highlight rings on top of the color map
   cctx.globalCompositeOperation = 'lighter'
   for (let i = 0; i < 7; i++) {
     const cx = ((i * 47) % size) + 8
     const cy = ((i * 73) % size) + 8
     const rad = 10 + (i % 4) * 5
     const g = cctx.createRadialGradient(cx, cy, 1, cx, cy, rad)
-    g.addColorStop(0, 'rgba(230, 250, 255, 0.45)')
-    g.addColorStop(0.45, 'rgba(160, 220, 255, 0.18)')
+    g.addColorStop(0, 'rgba(255, 255, 255, 0.4)')
+    g.addColorStop(0.45, 'rgba(180, 235, 255, 0.2)')
     g.addColorStop(1, 'rgba(0, 0, 0, 0)')
     cctx.fillStyle = g
     cctx.beginPath()
@@ -1639,10 +1599,5 @@ function makeWaterTextures() {
   map.wrapS = map.wrapT = THREE.RepeatWrapping
   map.colorSpace = THREE.SRGBColorSpace
   map.anisotropy = 4
-
-  const normal = new THREE.CanvasTexture(normalCanvas)
-  normal.wrapS = normal.wrapT = THREE.RepeatWrapping
-  normal.anisotropy = 4
-
-  return { map, normal }
+  return map
 }
