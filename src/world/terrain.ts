@@ -121,12 +121,13 @@ export function generateWorld(seed = 20260717): WorldMap {
   }
 
   const teamRooms: RoomSpec[] = [
-    { id: 'team-core', name: 'Core', w: 10, h: 7, capacity: 12, color: '#c8102e', kind: 'room' },
-    { id: 'team-watch', name: 'Watch', w: 10, h: 7, capacity: 12, color: '#2563eb', kind: 'room' },
-    { id: 'team-today', name: 'Today', w: 10, h: 7, capacity: 12, color: '#d97706', kind: 'room' },
-    { id: 'team-hero', name: 'Hero', w: 10, h: 7, capacity: 12, color: '#7c3aed', kind: 'room' },
-    { id: 'team-commerce', name: 'Commerce', w: 10, h: 7, capacity: 12, color: '#0d9488', kind: 'room' },
-    { id: 'team-commerce-2', name: 'Commerce 2', w: 10, h: 7, capacity: 12, color: '#0891b2', kind: 'room' },
+    { id: 'team-core', name: 'Core', w: 10, h: 7, capacity: 20, color: '#c8102e', kind: 'room' },
+    { id: 'team-watch', name: 'Watch', w: 10, h: 7, capacity: 20, color: '#2563eb', kind: 'room' },
+    { id: 'team-today', name: 'Today', w: 10, h: 7, capacity: 20, color: '#d97706', kind: 'room' },
+    { id: 'team-hero', name: 'Hero', w: 10, h: 7, capacity: 20, color: '#7c3aed', kind: 'room' },
+    { id: 'team-commerce', name: 'Commerce', w: 10, h: 7, capacity: 20, color: '#0d9488', kind: 'room' },
+    { id: 'team-commerce-2', name: 'Commerce 2', w: 10, h: 7, capacity: 20, color: '#0891b2', kind: 'room' },
+    { id: 'team-creator', name: 'Creator', w: 10, h: 7, capacity: 20, color: '#db2777', kind: 'room' },
   ]
 
   const meet2: RoomSpec[] = Array.from({ length: 5 }, (_, i) => ({
@@ -179,24 +180,16 @@ export function generateWorld(seed = 20260717): WorldMap {
     kind: 'plaza',
   }
 
-  const roomSpecs: RoomSpec[] = [
-    ...teamRooms,
-    ...meet2,
-    ...meet4,
-    ...meet8,
-    ...meet15,
-  ]
-
   const rooms: RoomDef[] = []
   const occupied: { x: number; y: number; w: number; h: number }[] = []
 
   // Plaza first — open event ground near map center
+  const plazaPathY = PATH_ROWS[2]! // 33
   {
-    const pathY = 33
     const plaza: RoomDef = {
       ...plazaSpec,
       x: Math.floor(MAP_W / 2 - plazaSpec.w / 2),
-      y: pathY - plazaSpec.h,
+      y: plazaPathY - plazaSpec.h,
       door: 's',
     }
     flattenFootprint(tiles, plaza.x, plaza.y, plaza.w, plaza.h)
@@ -205,31 +198,38 @@ export function generateWorld(seed = 20260717): WorldMap {
     occupied.push({ x: plaza.x, y: plaza.y, w: plaza.w, h: plaza.h })
   }
 
-  // Fall Guys pad first (reserves space) so meeting rooms stay clear of it
+  // Fall Guys + XO pads (south of eastern path) before meeting rows
   stampFallGuysArena(tiles, occupied, rooms)
-  // XO booth (cap 2) — dedicated game room near west paths
   stampXoBooth(tiles, occupied, rooms)
 
-  const slots = buildSlots()
-  for (const spec of roomSpecs) {
-    const slot = takeSlot(slots, occupied, spec.w, spec.h)
-    if (!slot) continue
-
-    flattenFootprint(tiles, slot.x, slot.y, spec.w, spec.h)
-
-    const room: RoomDef = { ...spec, x: slot.x, y: slot.y, door: 's' }
-    rooms.push(room)
-    occupied.push({ x: slot.x, y: slot.y, w: spec.w, h: spec.h })
-    stampRoom(tiles, room)
-    clearDoorApproach(tiles, room)
+  // Ordered campus rows (north of each path) — teams separate from meeting sizes
+  // PATH 9  → team rooms (one dedicated row)
+  stampRoomRow(tiles, occupied, rooms, teamRooms, PATH_ROWS[0]!, 2, 1)
+  // PATH 21 → Meet 2 only
+  stampRoomRow(tiles, occupied, rooms, meet2, PATH_ROWS[1]!, 3, 2)
+  // PATH 33 → Meet 4 on plaza flanks (west then east)
+  {
+    const plaza = rooms.find((r) => r.id === 'plaza-main')!
+    stampRoomRow(tiles, occupied, rooms, meet4.slice(0, 3), plazaPathY, 3, 2, plaza.x - 1)
+    stampRoomRow(
+      tiles,
+      occupied,
+      rooms,
+      meet4.slice(3),
+      plazaPathY,
+      plaza.x + plaza.w + 2,
+      2,
+    )
   }
+  // PATH 45 → Meet 8 then Meet 15 (north of path; FG/XO sit south)
+  stampRoomRow(tiles, occupied, rooms, [...meet8, ...meet15], PATH_ROWS[3]!, 3, 2)
 
   // Guarantee a few visible campus ponds (paths/rooms can wipe natural water)
   stampCampusPonds(tiles, occupied, seed)
 
   // Spawn on central path near plaza if possible
   let spawn = { x: 42, y: 34 }
-  const plaza = rooms.find((r) => r.kind === 'plaza')
+  const plaza = rooms.find((r) => r.id === 'plaza-main')
   if (plaza) {
     spawn = {
       x: plaza.x + Math.floor(plaza.w / 2),
@@ -250,46 +250,40 @@ export function generateWorld(seed = 20260717): WorldMap {
   return { seed, tiles, rooms, spawn }
 }
 
-/** Slots north of each horizontal path, spaced along X. */
-function buildSlots() {
-  const slots: { x: number; y: number; pathY: number }[] = []
-  const xs = [3, 14, 25, 37, 48, 59, 70]
-  for (const pathY of PATH_ROWS) {
-    for (const x of xs) {
-      slots.push({ x, y: pathY, pathY })
-    }
-  }
-  return slots
-}
-
-function takeSlot(
-  slots: { x: number; y: number; pathY: number }[],
+/** Place a sequence of rooms in a neat row north of a horizontal path. */
+function stampRoomRow(
+  tiles: TerrainType[][],
   occupied: { x: number; y: number; w: number; h: number }[],
-  w: number,
-  h: number,
+  rooms: RoomDef[],
+  specs: RoomSpec[],
+  pathY: number,
+  startX: number,
+  gap: number,
+  maxXExclusive: number = MAP_W - 1,
 ) {
-  while (slots.length > 0) {
-    const raw = slots.shift()!
-    const y = raw.pathY - h
-    if (y < 2 || y + h >= MAP_H - 2) continue
-    if (raw.x < 2 || raw.x + w >= MAP_W - 2) continue
-    const candidate = { x: raw.x, y }
-    if (overlapsAny(candidate, w, h, occupied)) continue
-    // Prefer plaza near map center — skip early slots for large plaza by allowing center bias
-    return candidate
-  }
-  // Fallback sweep
-  for (const pathY of PATH_ROWS) {
-    for (let x = 3; x < MAP_W - 12; x += 11) {
-      const y = pathY - h
-      if (y < 2) continue
+  let x = startX
+  for (const spec of specs) {
+    const y = pathY - spec.h
+    if (y < 2) continue
+
+    let placed = false
+    for (let guard = 0; guard < 60 && !placed; guard++) {
+      if (x + spec.w >= maxXExclusive || x + spec.w >= MAP_W - 1) break
       const candidate = { x, y }
-      if (overlapsAny(candidate, w, h, occupied)) continue
-      if (candidate.x + w >= MAP_W - 2) continue
-      return candidate
+      if (!overlapsAny(candidate, spec.w, spec.h, occupied, 1)) {
+        flattenFootprint(tiles, x, y, spec.w, spec.h)
+        const room: RoomDef = { ...spec, x, y, door: 's' }
+        rooms.push(room)
+        occupied.push({ x, y, w: spec.w, h: spec.h })
+        stampRoom(tiles, room)
+        clearDoorApproach(tiles, room)
+        x += spec.w + gap
+        placed = true
+        break
+      }
+      x += 1
     }
   }
-  return null
 }
 
 function overlapsAny(
@@ -481,25 +475,31 @@ function stampFallGuysArena(
   occupied.push({ x: room.x, y: room.y, w: room.w, h: room.h })
 }
 
-/** Compact 2-player XO booth — real room so capacity 2 is enforced. */
+/** Open XO pad beside Fall Guys — plaza zone (no walls), capacity 2. */
 function stampXoBooth(
   tiles: TerrainType[][],
   occupied: { x: number; y: number; w: number; h: number }[],
   rooms: RoomDef[],
 ) {
   const w = 6
-  const h = 5
-  const candidates: { x: number; y: number }[] = [
-    { x: 3, y: 24 },
-    { x: 3, y: 12 },
-    { x: 14, y: 24 },
-    { x: 3, y: 36 },
-    { x: 58, y: 12 },
-  ]
+  const h = 6
+  const fg = rooms.find((r) => r.id === FALLGUYS_ROOM_ID)
+  const candidates: { x: number; y: number }[] = []
+  if (fg) {
+    // Prefer west of Fall Guys (same row), then east / south
+    candidates.push(
+      { x: fg.x - w - 1, y: fg.y },
+      { x: fg.x + fg.w + 1, y: fg.y },
+      { x: fg.x, y: fg.y + fg.h + 1 },
+      { x: fg.x - w - 1, y: fg.y + 1 },
+    )
+  }
+  candidates.push({ x: 61, y: 47 }, { x: 60, y: 35 }, { x: 3, y: 47 })
+
   let spot = candidates[0]!
   for (const c of candidates) {
-    if (c.x + w >= MAP_W - 1 || c.y + h >= MAP_H - 1) continue
-    if (!overlapsAny(c, w, h, occupied, 2)) {
+    if (c.x < 2 || c.y < 2 || c.x + w >= MAP_W - 1 || c.y + h >= MAP_H - 1) continue
+    if (!overlapsAny(c, w, h, occupied, 1)) {
       spot = c
       break
     }
@@ -514,12 +514,32 @@ function stampXoBooth(
     h,
     capacity: 2,
     color: '#0ea5e9',
-    door: 's',
-    kind: 'room',
+    door: 'n',
+    kind: 'plaza',
   }
   flattenFootprint(tiles, room.x, room.y, room.w, room.h)
-  stampRoom(tiles, room)
-  clearDoorApproach(tiles, room)
+
+  for (let y = room.y; y < room.y + room.h; y++) {
+    for (let x = room.x; x < room.x + room.w; x++) {
+      const onBorder =
+        y === room.y || y === room.y + room.h - 1 || x === room.x || x === room.x + room.w - 1
+      tiles[y][x] = onBorder ? 'plazaBorder' : 'plaza'
+    }
+  }
+
+  const door = roomDoor(room)
+  tiles[door.doorY][door.doorX] = 'plaza'
+  tiles[door.doorY][door.doorX2] = 'plaza'
+  // Path stub north toward the main path row (same idea as Fall Guys)
+  const pathY = Math.max(2, room.y - 2)
+  for (let y = room.y - 1; y >= pathY && y > 0; y--) {
+    for (const x of [door.doorX - 1, door.doorX, door.doorX2, door.doorX2 + 1]) {
+      if (x <= 0 || x >= MAP_W - 1) continue
+      const t = tiles[y][x]
+      if (t !== 'wall' && t !== 'water' && t !== 'rock') tiles[y][x] = 'path'
+    }
+  }
+
   rooms.push(room)
   occupied.push({ x: room.x, y: room.y, w: room.w, h: room.h })
 }

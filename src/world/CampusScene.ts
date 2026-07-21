@@ -6,6 +6,7 @@ import { Character3D } from '../character/Character3D'
 import type { CharacterLook, Facing, PeerPresence, RoomDef } from '../types'
 import { canFlyOverWater } from '../types'
 import { FALLGUYS_ROOM_ID } from '../fallguys/types'
+import { XO_ROOM_ID } from '../xo/types'
 
 /** 1 = max zoom in (character). Min zoom stays mid-range — no full-map pullback. */
 const ZOOM_DEFAULT = 0.42
@@ -199,6 +200,7 @@ export class CampusScene {
     const grassB = 0x4f9a45
     const grassC = 0x6bb85a
     const fallGuysPad = map.rooms.find((r) => r.id === FALLGUYS_ROOM_ID) ?? null
+    const xoPad = map.rooms.find((r) => r.id === XO_ROOM_ID) ?? null
 
     for (let ty = 0; ty < MAP_H; ty++) {
       for (let tx = 0; tx < MAP_W; tx++) {
@@ -212,10 +214,19 @@ export class CampusScene {
           tx < fallGuysPad.x + fallGuysPad.w &&
           ty >= fallGuysPad.y &&
           ty < fallGuysPad.y + fallGuysPad.h
+        const inXo =
+          !!xoPad &&
+          tx >= xoPad.x &&
+          tx < xoPad.x + xoPad.w &&
+          ty >= xoPad.y &&
+          ty < xoPad.y + xoPad.h
 
         if (inFallGuys && (type === 'plaza' || type === 'plazaBorder')) {
           // Solid pink pad — no yellow checker
           color = type === 'plazaBorder' ? 0xd946ef : 0xff4fd8
+        } else if (inXo && (type === 'plaza' || type === 'plazaBorder')) {
+          // Solid sky-blue XO pad beside Fall Guys
+          color = type === 'plazaBorder' ? 0x0284c7 : 0x38bdf8
         } else if (type === 'grass') {
           color = n % 3 === 0 ? grassA : n % 3 === 1 ? grassB : grassC
         } else if (type === 'path' && n % 5 === 0) {
@@ -328,7 +339,7 @@ export class CampusScene {
     }
 
     for (const room of map.rooms) {
-      if (room.id === FALLGUYS_ROOM_ID) this.buildFallGuysPad(ground, room)
+      if (room.id === FALLGUYS_ROOM_ID || room.id === XO_ROOM_ID) this.buildFallGuysPad(ground, room)
       else if (room.kind === 'plaza') this.buildPlazaShell(ground, room)
       else this.buildRoomShell(ground, room)
     }

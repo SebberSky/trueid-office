@@ -1,4 +1,4 @@
-export type ChatChannel = 'global' | 'room'
+export type ChatChannel = 'global' | 'room' | 'dm'
 
 export interface ChatMessage {
   id: string
@@ -8,6 +8,16 @@ export interface ChatMessage {
   text: string
   at: number
   roomId?: string
+}
+
+/** Direct message between two players (relayed by server, history in client cookies). */
+export interface DmMessage {
+  id: string
+  fromId: string
+  fromName: string
+  toId: string
+  text: string
+  at: number
 }
 
 /** One pinned message per room (server-authoritative until unpinned). */

@@ -1,5 +1,5 @@
 export const XO_ROOM_ID = 'xo-booth'
-export const XO_ROOM_NAME = 'XO · Tic-Tac-Toe'
+export const XO_ROOM_NAME = 'XO Arena'
 
 export type XoMark = 'X' | 'O'
 

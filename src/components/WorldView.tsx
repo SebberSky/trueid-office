@@ -9,10 +9,12 @@ import { RoomMedia } from '../media/RoomMedia'
 import { downloadRecording, ScreenRecorder } from '../media/ScreenRecorder'
 import { GlobalChatBus } from '../chat/GlobalChat'
 import { FLOAT_EMOJIS, RoomActivityBus, type Poll } from '../chat/RoomActivity'
-import type { ChatMessage, PinnedMessage } from '../chat/types'
+import type { ChatMessage, DmMessage, PinnedMessage } from '../chat/types'
 import type { Facing } from '../types'
 import { canFlyOverWater, normalizeAnimalKind } from '../types'
 import { ChatPanel } from './ChatPanel'
+import { DmPanel } from './DmPanel'
+import { DmChatBus } from '../chat/DmChat'
 import { NameWheel } from './NameWheel'
 import { PollPanel } from './PollPanel'
 import { FloatingEmojis, type FloatEmojiItem } from './FloatingEmojis'
@@ -36,6 +38,7 @@ import {
 } from '../fallguys/types'
 import {
   XO_ROOM_ID,
+  XO_ROOM_NAME,
   emptyBoard,
   type XoActiveGame,
   type XoCell,
@@ -94,6 +97,7 @@ export function WorldView() {
   const mediaRef = useRef<RoomMedia | null>(null)
   const recorderRef = useRef<ScreenRecorder | null>(null)
   const globalChatRef = useRef<GlobalChatBus | null>(null)
+  const dmChatRef = useRef<DmChatBus | null>(null)
   const activityRef = useRef<RoomActivityBus | null>(null)
   const sceneRef = useRef<CampusScene | null>(null)
   const lookRef = useRef(session.look)
@@ -161,6 +165,14 @@ export function WorldView() {
   const [mediaError, setMediaError] = useState<string | null>(null)
   const [globalMsgs, setGlobalMsgs] = useState<ChatMessage[]>([])
   const [roomMsgs, setRoomMsgs] = useState<ChatMessage[]>([])
+  /** When in a room, global chat starts collapsed to one preview line. */
+  const [globalChatExpanded, setGlobalChatExpanded] = useState(true)
+  const [dmThread, setDmThread] = useState<{
+    peerId: string
+    peerName: string
+    messages: DmMessage[]
+  } | null>(null)
+  const [dmUnreadTick, setDmUnreadTick] = useState(0)
   const [handRaised, setHandRaised] = useState(false)
   const [raisedHands, setRaisedHands] = useState<{ id: string; name: string }[]>([])
   const [pollOpen, setPollOpen] = useState(false)
@@ -174,6 +186,11 @@ export function WorldView() {
 
   useEffect(() => {
     roomIdRef.current = roomId
+  }, [roomId])
+
+  // Entering a room collapses global chat; leaving expands it again.
+  useEffect(() => {
+    setGlobalChatExpanded(!roomId)
   }, [roomId])
 
   // Enter pink pad during a live race → spectator overlay (unless already a racer)
@@ -473,6 +490,11 @@ export function WorldView() {
     globalChatRef.current = globalChat
     const unsubChat = globalChat.subscribe(setGlobalMsgs)
 
+    const dmChat = new DmChatBus(net, session.id)
+    dmChatRef.current = dmChat
+    const unsubDm = dmChat.subscribe(setDmThread)
+    const unsubDmUnread = dmChat.subscribeUnread(() => setDmUnreadTick((n) => n + 1))
+
     const activity = new RoomActivityBus(net, session.id)
     activityRef.current = activity
     const unsubAct = activity.subscribe((ev) => {
@@ -561,13 +583,17 @@ export function WorldView() {
       unsub()
       unsubLock()
       unsubChat()
+      unsubDm()
+      unsubDmUnread()
       unsubAct()
       void media.destroy()
       globalChat.destroy()
+      dmChat.destroy()
       activity.destroy()
       bus.destroy()
       net.destroy()
       netRef.current = null
+      dmChatRef.current = null
     }
   }, [session.id, session.email, session.look, applyLocks, pushRoomSys, logout, map, setLastPose])
 
@@ -749,7 +775,8 @@ export function WorldView() {
       if (xoRoleRef.current === 'player' && nextRoom?.id !== XO_ROOM_ID) return
       if (nextRoom && (!prevRoom || prevRoom.id !== nextRoom.id)) {
         if (lockedRoomsRef.current.has(nextRoom.id)) return
-        if (!isUnlimited(nextRoom)) {
+        // XO is an open plaza pad but still hard-caps at 2 players
+        if (!isUnlimited(nextRoom) || nextRoom.id === XO_ROOM_ID) {
           const others = peersRef.current.filter((p) => p.roomId === nextRoom.id).length
           if (others + 1 > nextRoom.capacity) return
         }
@@ -1143,8 +1170,10 @@ export function WorldView() {
       roomLabel: roomLabelFor(p.roomId),
       voiceOn: p.voiceOn,
       sharing: p.sharing,
+      dmUnread: dmChatRef.current?.getUnread(p.id) ?? 0,
     })),
   ]
+  void dmUnreadTick // re-render when unread changes
 
   const roomPeople: RosterPerson[] = roomId
     ? [
@@ -1191,6 +1220,10 @@ export function WorldView() {
               people={serverPeople}
               onClose={() => setRoster(null)}
               anchorRef={onlineBtnRef}
+              onStartDm={(person) => {
+                dmChatRef.current?.open(person.id, person.name)
+                setRoster(null)
+              }}
             />
           </div>
           {roomName ? (
@@ -1271,9 +1304,9 @@ export function WorldView() {
         )}
         {roomId === XO_ROOM_ID && xoRole === 'none' && xoPhase !== 'playing' && (
           <div className="world__fg-lobby">
-            <strong>XO · Tic-Tac-Toe</strong>
+            <strong>{XO_ROOM_NAME}</strong>
             <p>
-              ในห้อง {xoLobby.inZone.length}/2 คน
+              ในโซน {xoLobby.inZone.length}/2 คน
               {xoLobby.hostId === session.id ? ' · คุณเป็นโฮสต์' : ''}
             </p>
             <button
@@ -1478,12 +1511,16 @@ export function WorldView() {
           </p>
         )}
 
-        <div className="world__chats">
+        <div className={`world__chats${roomId && !globalChatExpanded ? ' global-collapsed' : ''}`}>
           <ChatPanel
             channel="global"
             messages={globalMsgs}
             enabled
             placeholder="Global chat…"
+            collapsed={!!roomId && !globalChatExpanded}
+            onToggleCollapse={
+              roomId ? () => setGlobalChatExpanded((v) => !v) : undefined
+            }
             onSend={(text) => globalChatRef.current?.send(session.look.displayName, text)}
           />
           {roomId && (
@@ -1583,6 +1620,16 @@ export function WorldView() {
 
         <div ref={audioHostRef} className="world__audio-host" hidden />
       </aside>
+
+      {dmThread && (
+        <DmPanel
+          peerName={dmThread.peerName}
+          messages={dmThread.messages}
+          selfId={session.id}
+          onSend={(text) => dmChatRef.current?.send(session.look.displayName, text)}
+          onClose={() => dmChatRef.current?.close()}
+        />
+      )}
     </div>
   )
 }

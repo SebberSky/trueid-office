@@ -236,6 +236,22 @@
   flex: 1;
 }
 
+.world__chats.global-collapsed .chat--global {
+  flex: 0 0 auto;
+}
+
+.world__chats.global-collapsed .chat--room {
+  flex: 1 1 auto;
+  min-height: 0;
+}
+
+/* Expanded global beside room ≈ half the chat stack */
+.world__chats:not(.global-collapsed) .chat--global,
+.world__chats:not(.global-collapsed) .chat--room {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
 .world__dock.in-room {
   box-shadow: inset 3px 0 0 #c8102e;
 }
@@ -481,6 +497,21 @@
   .world__chats > * {
     flex: 1;
     min-width: 0;
+    min-height: 0;
+  }
+
+  /* Collapsed global stays a thin strip; room chat keeps the rest */
+  .world__chats.global-collapsed {
+    flex-direction: column;
+  }
+
+  .world__chats.global-collapsed .chat--global {
+    flex: 0 0 auto;
+    min-height: 0;
+  }
+
+  .world__chats.global-collapsed .chat--room {
+    flex: 1 1 auto;
     min-height: 0;
   }
 
