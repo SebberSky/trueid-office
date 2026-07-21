@@ -4,6 +4,12 @@ import type { PeerPresence } from '../src/types'
 import type { PinnedMessage } from '../src/chat/types'
 import type { ClientMsg, ServerMsg } from '../shared/protocol'
 import { ensureDataDir, loadAppearance, saveAppearance } from './appearances'
+import {
+  fallGuysWelcomeLobby,
+  handleFallGuysMsg,
+  onFallGuysLeave,
+  onFallGuysPresence,
+} from './fallguys'
 
 const PORT = Number(process.env.PORT || 3001)
 const STALE_MS = 5000
@@ -21,7 +27,7 @@ const clients = new Set<Client>()
 const lockedRooms = new Map<string, { byId: string; byName: string }>()
 /** One pinned chat message per room (any room including plaza). */
 const pinnedByRoom = new Map<string, PinnedMessage>()
-const UNLOCKABLE = new Set(['plaza-main'])
+const UNLOCKABLE = new Set(['plaza-main', 'fallguys-arena'])
 
 function send(ws: WebSocket, msg: ServerMsg) {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg))
@@ -177,6 +183,7 @@ wss.on('connection', (ws) => {
         peers: livePeers().filter((p) => p.id !== msg.id),
         lockedRooms: lockedRoomIds(),
         pinnedMessages: allPinnedMessages(),
+        fallguys: fallGuysWelcomeLobby({ clients, send, broadcast }),
       })
       return
     }
@@ -188,6 +195,7 @@ wss.on('connection', (ws) => {
       client.peer = { ...msg.peer, updatedAt: Date.now() }
       broadcast({ type: 'presence', peer: client.peer }, ws)
       clearEmptyRooms()
+      onFallGuysPresence({ clients, send, broadcast }, client)
       return
     }
 
@@ -197,6 +205,17 @@ wss.on('connection', (ws) => {
       client.peer = null
       broadcast({ type: 'leave', id }, ws)
       clearEmptyRooms()
+      onFallGuysLeave({ clients, send, broadcast }, id)
+      return
+    }
+
+    if (
+      msg.type === 'fallguys-start' ||
+      msg.type === 'fallguys-restart' ||
+      msg.type === 'fallguys-quit' ||
+      msg.type === 'fallguys-progress'
+    ) {
+      handleFallGuysMsg({ clients, send, broadcast }, client, msg)
       return
     }
 
@@ -309,6 +328,7 @@ wss.on('connection', (ws) => {
     clients.delete(client)
     if (id) broadcast({ type: 'leave', id })
     clearEmptyRooms()
+    onFallGuysLeave({ clients, send, broadcast }, id)
   })
 })
 
@@ -319,6 +339,7 @@ setInterval(() => {
       const id = c.peer.id
       c.peer = null
       broadcast({ type: 'leave', id })
+      onFallGuysLeave({ clients, send, broadcast }, id)
     }
   }
   clearEmptyRooms()

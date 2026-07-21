@@ -17,6 +17,7 @@ import { PollPanel } from './PollPanel'
 import { FloatingEmojis, type FloatEmojiItem } from './FloatingEmojis'
 import { OnlineRoster, type RosterPerson } from './OnlineRoster'
 import { FishingCatchOverlay } from './FishingCatch'
+import { FallGuysGame } from './FallGuysGame'
 import { MobileControls } from './MobileControls'
 import {
   FISH_CATCH_SHOW_MS,
@@ -24,6 +25,11 @@ import {
   randomFishingCatch,
   type FishingCatch,
 } from '../fishing/loot'
+import {
+  FALLGUYS_ROOM_ID,
+  type FallGuysLobbyState,
+  type FallGuysRacer,
+} from '../fallguys/types'
 import './World.css'
 
 const SPEED = 280
@@ -83,6 +89,14 @@ export function WorldView() {
   const [fishCatch, setFishCatch] = useState<FishingCatch | null>(null)
   const [nearWater, setNearWater] = useState(false)
   const [fishingActive, setFishingActive] = useState(false)
+  const [fgLobby, setFgLobby] = useState<FallGuysLobbyState>({ hostId: null, inZone: [] })
+  const [fgPlaying, setFgPlaying] = useState(false)
+  const [fgRaceId, setFgRaceId] = useState(0)
+  const [fgPlayers, setFgPlayers] = useState<{ id: string; name: string }[]>([])
+  const [fgScores, setFgScores] = useState<FallGuysRacer[]>([])
+  const [fgRaceOver, setFgRaceOver] = useState(false)
+  const fgRaceIdRef = useRef(0)
+  fgRaceIdRef.current = fgRaceId
   const fishTimerRef = useRef<number | null>(null)
   const fishPhaseRef = useRef<'idle' | 'waiting' | 'catch'>('idle')
   const fishingActiveRef = useRef(false)
@@ -180,6 +194,37 @@ export function WorldView() {
           if (p?.roomId) pins.set(p.roomId, p)
         }
         setPinsByRoom(pins)
+        if (msg.fallguys) setFgLobby(msg.fallguys)
+        return
+      }
+      if (msg.type === 'fallguys-lobby') {
+        setFgLobby(msg.lobby)
+        return
+      }
+      if (msg.type === 'fallguys-race-start') {
+        setFgRaceId(msg.race.raceId)
+        setFgPlayers(msg.race.players)
+        setFgScores(
+          msg.race.players.map((p) => ({
+            id: p.id,
+            name: p.name,
+            progress: 0,
+            finishedAt: null,
+          })),
+        )
+        setFgRaceOver(false)
+        if (msg.race.players.some((p) => p.id === session.id)) {
+          setFgPlaying(true)
+        }
+        return
+      }
+      if (msg.type === 'fallguys-race-update') {
+        setFgScores(msg.update.scores)
+        return
+      }
+      if (msg.type === 'fallguys-race-over') {
+        setFgScores(msg.result.ranking)
+        setFgRaceOver(true)
         return
       }
       if (msg.type === 'room-pin') {
@@ -901,11 +946,52 @@ export function WorldView() {
           onDone={(id) => setFloatEmojis((prev) => prev.filter((e) => e.id !== id))}
         />
         <FishingCatchOverlay catchItem={fishCatch} />
-        {nearWater && !fishingActive && (
+        {nearWater && !fishingActive && !fgPlaying && (
           <div className="world__fish-hint">กด F เพื่อตกปลา</div>
         )}
         {fishingActive && !fishCatch && (
           <div className="world__fish-hint is-wait">กำลังรอปลากัด…</div>
+        )}
+        {roomId === FALLGUYS_ROOM_ID && !fgPlaying && (
+          <div className="world__fg-lobby">
+            <strong>Fall Guys Arena</strong>
+            <p>
+              ในโซน {fgLobby.inZone.length} คน
+              {fgLobby.hostId === session.id ? ' · คุณเป็นโฮสต์' : ''}
+            </p>
+            <button
+              type="button"
+              disabled={fgLobby.hostId !== session.id || fgLobby.inZone.length < 1}
+              onClick={() => netRef.current?.send({ type: 'fallguys-start' })}
+            >
+              {fgLobby.hostId === session.id ? 'เริ่มเกม' : 'รอโฮสต์เริ่ม…'}
+            </button>
+          </div>
+        )}
+        {fgPlaying && (
+          <FallGuysGame
+            selfId={session.id}
+            selfName={session.look.displayName}
+            raceId={fgRaceId}
+            players={fgPlayers}
+            scores={fgScores}
+            raceOver={fgRaceOver}
+            isHost={fgLobby.hostId === session.id}
+            onProgress={(progress, finished) => {
+              netRef.current?.send({
+                type: 'fallguys-progress',
+                raceId: fgRaceIdRef.current,
+                progress,
+                finished,
+              })
+            }}
+            onRestart={() => netRef.current?.send({ type: 'fallguys-restart' })}
+            onQuit={() => {
+              netRef.current?.send({ type: 'fallguys-quit' })
+              setFgPlaying(false)
+              setFgRaceOver(false)
+            }}
+          />
         )}
         {(screenFrom || sharing) && (
           <div className={`world__screen ${screenFs ? 'is-fill' : 'is-pip'}`}>
@@ -941,7 +1027,7 @@ export function WorldView() {
           </div>
         )}
         <div className="world__hint world__hint--desktop">
-          WASD / ลูกศร เดิน · Space กระโดด · F ตกปลา (ริมสระ) · ลูกกลมเมาส์ / +− ซูม
+          WASD / ลูกศร เดิน · Space กระโดด · F ตกปลา · โซนชมพู = Fall Guys · ลูกกลมเมาส์ / +− ซูม
         </div>
         <MobileControls
           stickRef={stickRef}
