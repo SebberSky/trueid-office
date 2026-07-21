@@ -1,11 +1,13 @@
 import http from 'node:http'
 import { WebSocketServer, type WebSocket } from 'ws'
 import type { PeerPresence } from '../src/types'
+import type { PinnedMessage } from '../src/chat/types'
 import type { ClientMsg, ServerMsg } from '../shared/protocol'
 import { ensureDataDir, loadAppearance, saveAppearance } from './appearances'
 
 const PORT = Number(process.env.PORT || 3001)
 const STALE_MS = 5000
+const PIN_TEXT_MAX = 280
 
 type Client = {
   ws: WebSocket
@@ -17,6 +19,8 @@ type Client = {
 const clients = new Set<Client>()
 /** Locked meeting rooms (plaza-main is never lockable). */
 const lockedRooms = new Map<string, { byId: string; byName: string }>()
+/** One pinned chat message per room (any room including plaza). */
+const pinnedByRoom = new Map<string, PinnedMessage>()
 const UNLOCKABLE = new Set(['plaza-main'])
 
 function send(ws: WebSocket, msg: ServerMsg) {
@@ -45,6 +49,10 @@ function lockedRoomIds(): string[] {
   return [...lockedRooms.keys()]
 }
 
+function allPinnedMessages(): PinnedMessage[] {
+  return [...pinnedByRoom.values()]
+}
+
 function occupantsIn(roomId: string): number {
   let n = 0
   for (const c of clients) {
@@ -53,8 +61,8 @@ function occupantsIn(roomId: string): number {
   return n
 }
 
-/** Unlock empty rooms so locks do not stick after everyone leaves. */
-function unlockEmptyRooms() {
+/** Clear locks/pins when a room is empty so state does not stick. */
+function clearEmptyRooms() {
   for (const roomId of [...lockedRooms.keys()]) {
     if (occupantsIn(roomId) > 0) continue
     lockedRooms.delete(roomId)
@@ -62,6 +70,17 @@ function unlockEmptyRooms() {
       type: 'room-lock',
       roomId,
       locked: false,
+      byId: 'system',
+      byName: 'system',
+    })
+  }
+  for (const roomId of [...pinnedByRoom.keys()]) {
+    if (occupantsIn(roomId) > 0) continue
+    pinnedByRoom.delete(roomId)
+    broadcast({
+      type: 'room-pin',
+      roomId,
+      pinned: null,
       byId: 'system',
       byName: 'system',
     })
@@ -157,6 +176,7 @@ wss.on('connection', (ws) => {
         type: 'welcome',
         peers: livePeers().filter((p) => p.id !== msg.id),
         lockedRooms: lockedRoomIds(),
+        pinnedMessages: allPinnedMessages(),
       })
       return
     }
@@ -167,7 +187,7 @@ wss.on('connection', (ws) => {
       client.email = msg.peer.email
       client.peer = { ...msg.peer, updatedAt: Date.now() }
       broadcast({ type: 'presence', peer: client.peer }, ws)
-      unlockEmptyRooms()
+      clearEmptyRooms()
       return
     }
 
@@ -176,7 +196,59 @@ wss.on('connection', (ws) => {
       if (!id) return
       client.peer = null
       broadcast({ type: 'leave', id }, ws)
-      unlockEmptyRooms()
+      clearEmptyRooms()
+      return
+    }
+
+    if (msg.type === 'room-pin') {
+      if (!client.id || !client.peer) return
+      const roomId = msg.roomId?.trim()
+      if (!roomId) {
+        send(ws, { type: 'error', message: 'roomId required' })
+        return
+      }
+      if (client.peer.roomId !== roomId) {
+        send(ws, { type: 'error', message: 'must be inside the room to pin/unpin' })
+        return
+      }
+      const byName = client.peer.look?.displayName || client.email || client.id
+      if (!msg.message) {
+        pinnedByRoom.delete(roomId)
+        broadcast({
+          type: 'room-pin',
+          roomId,
+          pinned: null,
+          byId: client.id,
+          byName,
+        })
+        return
+      }
+      const text = String(msg.message.text || '')
+        .trim()
+        .slice(0, PIN_TEXT_MAX)
+      if (!text || !msg.message.id) {
+        send(ws, { type: 'error', message: 'invalid pin message' })
+        return
+      }
+      const pinned: PinnedMessage = {
+        roomId,
+        messageId: String(msg.message.id).slice(0, 32),
+        text,
+        fromId: String(msg.message.fromId || client.id).slice(0, 64),
+        fromName: String(msg.message.fromName || 'unknown').slice(0, 64),
+        at: Number(msg.message.at) || Date.now(),
+        pinnedById: client.id,
+        pinnedByName: byName,
+        pinnedAt: Date.now(),
+      }
+      pinnedByRoom.set(roomId, pinned)
+      broadcast({
+        type: 'room-pin',
+        roomId,
+        pinned,
+        byId: client.id,
+        byName,
+      })
       return
     }
 
@@ -236,7 +308,7 @@ wss.on('connection', (ws) => {
     const id = client.id
     clients.delete(client)
     if (id) broadcast({ type: 'leave', id })
-    unlockEmptyRooms()
+    clearEmptyRooms()
   })
 })
 
@@ -249,7 +321,7 @@ setInterval(() => {
       broadcast({ type: 'leave', id })
     }
   }
-  unlockEmptyRooms()
+  clearEmptyRooms()
 }, 2000)
 
 await ensureDataDir()

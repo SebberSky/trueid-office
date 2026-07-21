@@ -467,6 +467,13 @@ export class Character3D {
     return this.jumpY
   }
 
+  /** World position just above the nameplate (for floating reactions). */
+  getHeadWorld(out: THREE.Vector3) {
+    this.label.getWorldPosition(out)
+    out.y += 0.45
+    return out
+  }
+
   setPose(
     px: number,
     pz: number,

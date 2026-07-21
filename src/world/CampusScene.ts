@@ -46,6 +46,11 @@ export class CampusScene {
   /** Smooth zoom target & current in [0, 1]. */
   private zoomTarget = ZOOM_DEFAULT
   private zoom = ZOOM_DEFAULT
+  /** Smoothed camera look-at height (terrain-based — ignores bird flap / hover bob). */
+  private camFocusY = 0
+  private camFocusReady = false
+  private readonly headWorld = new THREE.Vector3()
+  private readonly headNdc = new THREE.Vector3()
 
   constructor(canvas: HTMLCanvasElement, map: WorldMap, look: CharacterLook) {
     this.renderer = new THREE.WebGLRenderer({
@@ -641,6 +646,22 @@ export class CampusScene {
     this.player.triggerJump()
   }
 
+  /**
+   * Project a character head to canvas UV (0–1, origin top-left).
+   * `who === 'local'` uses the local player; otherwise a peer id.
+   */
+  projectHeadScreen(who: 'local' | string): { x: number; y: number } | null {
+    const avatar = who === 'local' ? this.player : this.peers.get(who)
+    if (!avatar) return null
+    avatar.getHeadWorld(this.headWorld)
+    this.headNdc.copy(this.headWorld).project(this.camera)
+    if (this.headNdc.z > 1) return null
+    return {
+      x: (this.headNdc.x + 1) / 2,
+      y: (-this.headNdc.y + 1) / 2,
+    }
+  }
+
   syncPeers(peers: PeerPresence[], map: WorldMap, dt = 0) {
     const seen = new Set<string>()
     for (const p of peers) {
@@ -778,10 +799,15 @@ export class CampusScene {
     const followHeight = farHeight + (closeHeight - farHeight) * blend
 
     // Place camera at a rigid offset from the player every frame.
-    // Over water, birds hover — keep camera aimed at flight height, not the pond bed
-    const air = this.player.airHeight()
-    const focusY =
-      (this.playerIsBird && (moving || overWater) ? Math.max(y, 0.12) + 0.7 : y) + air
+    // Bird flap / water-hover / jump bob stay on the avatar mesh — do not pump the lens.
+    const desiredFocusY = this.playerIsBird ? y : y + this.player.airHeight()
+    if (!this.camFocusReady) {
+      this.camFocusY = desiredFocusY
+      this.camFocusReady = true
+    } else {
+      this.camFocusY += (desiredFocusY - this.camFocusY) * (1 - Math.exp(-10 * dt))
+    }
+    const focusY = this.camFocusY
     this.camera.position.set(
       x + (camDirX / camDirLen) * followDist,
       focusY + followHeight,

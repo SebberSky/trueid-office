@@ -9,12 +9,13 @@ import { RoomMedia } from '../media/RoomMedia'
 import { downloadRecording, ScreenRecorder } from '../media/ScreenRecorder'
 import { GlobalChatBus } from '../chat/GlobalChat'
 import { FLOAT_EMOJIS, RoomActivityBus, type Poll } from '../chat/RoomActivity'
-import type { ChatMessage } from '../chat/types'
+import type { ChatMessage, PinnedMessage } from '../chat/types'
 import type { Facing } from '../types'
 import { normalizeAnimalKind } from '../types'
 import { ChatPanel } from './ChatPanel'
 import { PollPanel } from './PollPanel'
 import { FloatingEmojis, type FloatEmojiItem } from './FloatingEmojis'
+import { OnlineRoster, type RosterPerson } from './OnlineRoster'
 import { MobileControls } from './MobileControls'
 import './World.css'
 
@@ -63,10 +64,15 @@ export function WorldView() {
   const [roomId, setRoomId] = useState<string | null>(null)
   const [capacity, setCapacity] = useState({ in: 0, max: 0 })
   const [lockedRooms, setLockedRooms] = useState<Set<string>>(() => new Set())
+  const [pinsByRoom, setPinsByRoom] = useState<Map<string, PinnedMessage>>(() => new Map())
   const [voiceOn, setVoiceOn] = useState(false)
   const [sharing, setSharing] = useState(false)
   const [recording, setRecording] = useState(false)
   const [peerCount, setPeerCount] = useState(0)
+  const [peersLive, setPeersLive] = useState<ReturnType<PresenceBus['getPeers']>>([])
+  const [roster, setRoster] = useState<'server' | 'room' | null>(null)
+  const onlineBtnRef = useRef<HTMLButtonElement>(null)
+  const roomBtnRef = useRef<HTMLButtonElement>(null)
   const [screenFrom, setScreenFrom] = useState<string | null>(null)
   const [mediaError, setMediaError] = useState<string | null>(null)
   const [globalMsgs, setGlobalMsgs] = useState<ChatMessage[]>([])
@@ -148,11 +154,34 @@ export function WorldView() {
     const unsub = bus.subscribe(() => {
       peersRef.current = bus.getPeers()
       setPeerCount(peersRef.current.length)
+      setPeersLive(peersRef.current)
     })
 
     const unsubLock = net.subscribe((msg) => {
       if (msg.type === 'welcome') {
         applyLocks(msg.lockedRooms ?? [])
+        const pins = new Map<string, PinnedMessage>()
+        for (const p of msg.pinnedMessages ?? []) {
+          if (p?.roomId) pins.set(p.roomId, p)
+        }
+        setPinsByRoom(pins)
+        return
+      }
+      if (msg.type === 'room-pin') {
+        setPinsByRoom((prev) => {
+          const next = new Map(prev)
+          if (msg.pinned) next.set(msg.roomId, msg.pinned)
+          else next.delete(msg.roomId)
+          return next
+        })
+        const currentRoom = roomIdRef.current
+        if (currentRoom && msg.roomId === currentRoom && msg.byId !== 'system') {
+          pushRoomSys(
+            msg.byName,
+            msg.pinned ? `📌 ปักหมุด: ${msg.pinned.text.slice(0, 80)}` : '📌 เลิกปักหมุดแล้ว',
+            currentRoom,
+          )
+        }
         return
       }
       if (msg.type !== 'room-lock') return
@@ -204,7 +233,7 @@ export function WorldView() {
       } else if (ev.type === 'emoji') {
         setFloatEmojis((prev) => [
           ...prev,
-          { id: nanoid(6), emoji: ev.emoji, x: ev.x, fromName: ev.fromName },
+          { id: nanoid(6), emoji: ev.emoji, fromId: ev.fromId, fromName: ev.fromName },
         ])
       }
     })
@@ -220,12 +249,15 @@ export function WorldView() {
           if (stream.getAudioTracks().length === 0) continue
           const audio = document.createElement('audio')
           audio.autoplay = true
+          audio.muted = false
+          audio.volume = 1
           audio.setAttribute('playsinline', 'true')
           audio.srcObject = stream
           audio.dataset.peer = id
           host.appendChild(audio)
           void audio.play().catch(() => undefined)
         }
+        resumeAudioRef.current?.()
         if (recorderRef.current?.recording) {
           recorderRef.current.setAudioSources(mediaRef.current?.collectAudioStreams() ?? [])
         }
@@ -233,6 +265,8 @@ export function WorldView() {
       (stream, fromId) => {
         screenStreamRef.current = stream
         setScreenFrom(fromId)
+        // Sharing button/state follows *local* outbound share only — not whoever is on the preview.
+        setSharing(fromId === session.id)
       },
       setRoomMsgs,
     )
@@ -516,21 +550,28 @@ export function WorldView() {
 
   // Outside rooms: no mic / screen share — shut them down when leaving
   useEffect(() => {
-    if (roomId) return
+    if (roomId) {
+      // Entering a room: try to unmute remote audio (mic stays off until user enables it).
+      resumeAudioRef.current?.()
+      return
+    }
     setMediaError(null)
-    setScreenFrom(null)
-    void mediaRef.current?.setVoice(false)
-    void mediaRef.current?.stopScreenShare()
     setVoiceOn(false)
-    setSharing(false)
     setHandRaised(false)
     setRaisedHands([])
     setActivePoll(null)
     setPollOpen(false)
     setFloatEmojis([])
     setScreenFs(false)
-    screenStreamRef.current = null
     void stopRecordingIfNeeded()
+    void (async () => {
+      await mediaRef.current?.setVoice(false)
+      await mediaRef.current?.stopScreenShare()
+      // Drop preview after local stop — do not keep showing remotes outside a room.
+      setScreenFrom(null)
+      setSharing(false)
+      screenStreamRef.current = null
+    })()
   }, [roomId])
 
   useEffect(() => {
@@ -621,12 +662,11 @@ export function WorldView() {
     setMediaError(null)
     try {
       if (sharing) {
+        // Stop only our outbound share; RoomMedia keeps/restores remote shares on the preview.
         await stopRecordingIfNeeded()
         await mediaRef.current?.stopScreenShare()
-        setSharing(false)
       } else {
         await mediaRef.current?.startScreenShare()
-        setSharing(true)
       }
     } catch (err) {
       setMediaError(mediaErrMessage(err, 'ยกเลิกหรือไม่สามารถแชร์จอได้'))
@@ -641,8 +681,55 @@ export function WorldView() {
     netRef.current?.send({ type: 'room-lock', roomId, locked: !locked })
   }
 
-  const canLockRoom = !!roomId && map.rooms.find((r) => r.id === roomId)?.kind === 'room'
+  // Close room roster when leaving the room
+  useEffect(() => {
+    if (!roomId && roster === 'room') setRoster(null)
+  }, [roomId, roster])
+
   const roomIsLocked = !!(roomId && lockedRooms.has(roomId))
+
+  const roomLabelFor = (id: string | null | undefined) => {
+    if (!id) return 'นอกห้อง'
+    return map.rooms.find((r) => r.id === id)?.name ?? id
+  }
+
+  const selfRoster = (inRoomOnly: boolean): RosterPerson | null => {
+    if (inRoomOnly && !roomId) return null
+    return {
+      id: session.id,
+      name: session.look.displayName,
+      roomLabel: roomLabelFor(roomId),
+      voiceOn,
+      sharing,
+      isSelf: true,
+    }
+  }
+
+  const serverPeople: RosterPerson[] = [
+    ...(selfRoster(false) ? [selfRoster(false)!] : []),
+    ...peersLive.map((p) => ({
+      id: p.id,
+      name: p.look.displayName || p.email,
+      roomLabel: roomLabelFor(p.roomId),
+      voiceOn: p.voiceOn,
+      sharing: p.sharing,
+    })),
+  ]
+
+  const roomPeople: RosterPerson[] = roomId
+    ? [
+        ...(selfRoster(true) ? [selfRoster(true)!] : []),
+        ...peersLive
+          .filter((p) => p.roomId === roomId)
+          .map((p) => ({
+            id: p.id,
+            name: p.look.displayName || p.email,
+            roomLabel: roomName,
+            voiceOn: p.voiceOn,
+            sharing: p.sharing,
+          })),
+      ]
+    : []
 
   return (
     <div className="world">
@@ -652,13 +739,45 @@ export function WorldView() {
           <span>{session.look.displayName}</span>
         </div>
         <div className="world__meta">
-          <span>ออนไลน์ {peerCount + 1}</span>
+          <div className="world__meta-item">
+            <button
+              type="button"
+              ref={onlineBtnRef}
+              className={roster === 'server' ? 'world__online-btn is-open' : 'world__online-btn'}
+              onClick={() => setRoster((v) => (v === 'server' ? null : 'server'))}
+              title="รายชื่อคนออนไลน์ทั้งเซิร์ฟ"
+            >
+              ออนไลน์ {peerCount + 1}
+            </button>
+            <OnlineRoster
+              open={roster === 'server'}
+              title="ออนไลน์ทั้งเซิร์ฟ"
+              people={serverPeople}
+              onClose={() => setRoster(null)}
+              anchorRef={onlineBtnRef}
+            />
+          </div>
           {roomName ? (
-            <span className="world__room">
-              {roomIsLocked ? '🔒 ' : ''}
-              {roomName}
-              {capacity.max > 0 ? ` · ${capacity.in}/${capacity.max}` : ` · ${capacity.in} คน · ไม่จำกัด`}
-            </span>
+            <div className="world__meta-item">
+              <button
+                type="button"
+                ref={roomBtnRef}
+                className={roster === 'room' ? 'world__room-btn is-open' : 'world__room-btn'}
+                onClick={() => setRoster((v) => (v === 'room' ? null : 'room'))}
+                title="รายชื่อคนในห้องนี้"
+              >
+                {roomIsLocked ? '🔒 ' : ''}
+                {roomName}
+                {capacity.max > 0 ? ` · ${capacity.in}/${capacity.max}` : ` · ${capacity.in} คน · ไม่จำกัด`}
+              </button>
+              <OnlineRoster
+                open={roster === 'room'}
+                title={`ในห้อง · ${roomName}`}
+                people={roomPeople}
+                onClose={() => setRoster(null)}
+                anchorRef={roomBtnRef}
+              />
+            </div>
           ) : (
             <span className="world__outside">นอกห้อง — เดินเข้าห้องหรือลานกิจกรรมเพื่อคุย / แชร์จอ</span>
           )}
@@ -677,13 +796,22 @@ export function WorldView() {
         <canvas ref={canvasRef} tabIndex={0} />
         <FloatingEmojis
           items={floatEmojis}
+          getAnchor={(fromId) => {
+            const scene = sceneRef.current
+            if (!scene) return null
+            return scene.projectHeadScreen(fromId === session.id ? 'local' : fromId)
+          }}
           onDone={(id) => setFloatEmojis((prev) => prev.filter((e) => e.id !== id))}
         />
         {(screenFrom || sharing) && (
           <div className={`world__screen ${screenFs ? 'is-fill' : 'is-pip'}`}>
             <div className="world__screen-bar">
               <p>
-                {sharing ? 'คุณกำลังแชร์จอ' : 'กำลังรับแชร์จอ'}
+                {sharing
+                  ? 'คุณกำลังแชร์จอ'
+                  : screenFrom
+                    ? 'กำลังรับแชร์จอ'
+                    : 'แชร์จอ'}
                 {recording ? ' · กำลังอัด' : ''}
               </p>
               <div className="world__screen-actions">
@@ -795,6 +923,13 @@ export function WorldView() {
                 messages={roomMsgs}
                 enabled
                 placeholder="Room chat…"
+                pinned={pinsByRoom.get(roomId) ?? null}
+                onPinMessage={(message) => {
+                  netRef.current?.send({ type: 'room-pin', roomId, message })
+                }}
+                onUnpin={() => {
+                  netRef.current?.send({ type: 'room-pin', roomId, message: null })
+                }}
                 onSend={(text) => {
                   mediaRef.current?.sendRoomChat(session.look.displayName, text, roomId)
                 }}

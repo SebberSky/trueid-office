@@ -123,7 +123,7 @@ export class RoomActivityBus {
       fromName,
       emoji,
       at: Date.now(),
-      x: 0.15 + Math.random() * 0.7,
+      x: 0.5,
     })
   }
 

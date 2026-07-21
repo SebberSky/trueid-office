@@ -1,5 +1,5 @@
 import type { CharacterLook, PeerPresence } from '../src/types'
-import type { ChatMessage } from '../src/chat/types'
+import type { ChatMessage, PinnedMessage } from '../src/chat/types'
 import type { ActivityEvent } from '../src/chat/RoomActivity'
 import type { SignalData } from '../src/presence/bus'
 
@@ -12,16 +12,34 @@ export type ClientMsg =
   | { type: 'chat'; message: ChatMessage }
   | { type: 'activity'; event: ActivityEvent }
   | { type: 'room-lock'; roomId: string; locked: boolean }
+  | {
+      type: 'room-pin'
+      roomId: string
+      /** Pin this message, or null to unpin. */
+      message: ChatMessage | null
+    }
 
 /** Server → Client */
 export type ServerMsg =
-  | { type: 'welcome'; peers: PeerPresence[]; lockedRooms: string[] }
+  | {
+      type: 'welcome'
+      peers: PeerPresence[]
+      lockedRooms: string[]
+      pinnedMessages: PinnedMessage[]
+    }
   | { type: 'presence'; peer: PeerPresence }
   | { type: 'leave'; id: string }
   | { type: 'signal'; from: string; data: SignalData }
   | { type: 'chat'; message: ChatMessage }
   | { type: 'activity'; event: ActivityEvent }
   | { type: 'room-lock'; roomId: string; locked: boolean; byId: string; byName: string }
+  | {
+      type: 'room-pin'
+      roomId: string
+      pinned: PinnedMessage | null
+      byId: string
+      byName: string
+    }
   | { type: 'error'; message: string }
 
-export type { SignalData, CharacterLook, PeerPresence, ChatMessage, ActivityEvent }
+export type { SignalData, CharacterLook, PeerPresence, ChatMessage, PinnedMessage, ActivityEvent }
