@@ -5,16 +5,19 @@
   z-index: 12;
   display: grid;
   place-items: center;
-  animation: fishCatchIn 0.25s ease-out;
+  background: radial-gradient(circle at center, rgba(8, 47, 73, 0.35), transparent 55%);
+  animation: fishCatchIn 0.35s cubic-bezier(0.22, 1.2, 0.36, 1);
 }
 
 .fish-catch__frame {
-  width: min(280px, 56vw);
-  padding: 1.1rem 1.25rem 1rem;
-  border-radius: 16px;
-  border: 2px solid rgba(94, 234, 212, 0.55);
-  background: linear-gradient(160deg, rgba(15, 23, 42, 0.92), rgba(15, 60, 70, 0.9));
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  width: min(300px, 70vw);
+  padding: 1.25rem 1.35rem 1.1rem;
+  border-radius: 18px;
+  border: 2px solid rgba(94, 234, 212, 0.65);
+  background: linear-gradient(160deg, rgba(15, 23, 42, 0.95), rgba(12, 74, 110, 0.92));
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.5),
+    0 0 0 6px rgba(56, 189, 248, 0.12);
   display: flex;
   flex-direction: column;
   align-items: center;
@@ -23,32 +26,49 @@
 }
 
 .fish-catch__emoji {
-  font-size: 3.4rem;
+  font-size: 4rem;
   line-height: 1;
-  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.35));
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.4));
+  animation: fishCatchBounce 0.7s ease-out;
 }
 
 .fish-catch__label {
   font-family: var(--font-display);
-  font-size: 1.35rem;
+  font-size: 1.45rem;
   font-weight: 800;
   color: #f8fafc;
   letter-spacing: -0.02em;
 }
 
 .fish-catch__sub {
-  font-size: 0.8rem;
-  font-weight: 700;
+  font-size: 0.85rem;
+  font-weight: 800;
   color: #5eead4;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
 }
 
 @keyframes fishCatchIn {
   from {
     opacity: 0;
-    transform: scale(0.86);
+    transform: scale(0.72);
   }
   to {
     opacity: 1;
     transform: scale(1);
+  }
+}
+
+@keyframes fishCatchBounce {
+  0% {
+    transform: translateY(28px) scale(0.4) rotate(-12deg);
+    opacity: 0;
+  }
+  55% {
+    transform: translateY(-10px) scale(1.15) rotate(6deg);
+    opacity: 1;
+  }
+  100% {
+    transform: translateY(0) scale(1) rotate(0);
   }
 }

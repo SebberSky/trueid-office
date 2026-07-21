@@ -62,7 +62,7 @@ export const TERRAIN_COLOR: Record<TerrainType, string> = {
   path: '#c4b59a',
   floor: '#e8dfd0',
   sand: '#d4c48a',
-  water: '#2f8fc4',
+  water: '#4fc3f0',
   rock: '#6b6f76',
   wall: '#3d4450',
   desk: '#8b6914',
@@ -659,8 +659,9 @@ export function nearestWaterCastTarget(
   const tx = Math.floor(px / TILE)
   const ty = Math.floor(py / TILE)
   let best: { x: number; y: number; d: number } | null = null
-  for (let dy = -2; dy <= 2; dy++) {
-    for (let dx = -2; dx <= 2; dx++) {
+  // Wider search so shoreline approaches from any side still find a cast point
+  for (let dy = -3; dy <= 3; dy++) {
+    for (let dx = -3; dx <= 3; dx++) {
       if (dx === 0 && dy === 0) continue
       const wx = tx + dx
       const wy = ty + dy

@@ -1,12 +1,14 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 import { nanoid } from 'nanoid'
-import type { AppScreen, CharacterLook, UserSession } from './types'
+import type { AppScreen, CharacterLook, Facing, UserSession } from './types'
 import { normalizeAnimalKind } from './types'
 import { DEFAULT_LOOK } from './character/drawCharacter'
 import { fetchAppearance, putAppearance } from './net/OfficeSocket'
 
 const ALLOWED_DOMAINS = ['truedigital.com', 'muze.co.th']
+
+export type LastPose = { x: number; y: number; facing: Facing }
 
 function normalizeLook(look: CharacterLook): CharacterLook {
   return {
@@ -14,6 +16,17 @@ function normalizeLook(look: CharacterLook): CharacterLook {
     animalKind: normalizeAnimalKind(look.animalKind),
     displayName: look.displayName.trim().slice(0, 10),
   }
+}
+
+function normalizePose(raw: unknown): LastPose | null {
+  if (!raw || typeof raw !== 'object') return null
+  const o = raw as Record<string, unknown>
+  const x = Number(o.x)
+  const y = Number(o.y)
+  const facing = o.facing
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null
+  if (facing !== 'down' && facing !== 'up' && facing !== 'left' && facing !== 'right') return null
+  return { x, y, facing }
 }
 
 export function isAllowedEmail(email: string): boolean {
@@ -28,12 +41,15 @@ interface AppState {
   screen: AppScreen
   session: UserSession | null
   draftLook: CharacterLook
+  /** Server-remembered map pose for this email (cross-device). */
+  lastPose: LastPose | null
   loginError: string | null
   loginBusy: boolean
   setDraftLook: (patch: Partial<CharacterLook>) => void
+  setLastPose: (pose: LastPose | null) => void
   login: (email: string) => Promise<boolean>
   saveCharacter: () => void
-  logout: () => void
+  logout: (reason?: string) => void
   goWorld: () => void
   goCreator: () => void
 }
@@ -44,11 +60,14 @@ export const useAppStore = create<AppState>()(
       screen: 'login',
       session: null,
       draftLook: { ...DEFAULT_LOOK },
+      lastPose: null,
       loginError: null,
       loginBusy: false,
 
       setDraftLook: (patch) =>
         set((s) => ({ draftLook: { ...s.draftLook, ...patch } })),
+
+      setLastPose: (pose) => set({ lastPose: pose }),
 
       login: async (email) => {
         const trimmed = email.trim().toLowerCase()
@@ -62,8 +81,11 @@ export const useAppStore = create<AppState>()(
 
         set({ loginBusy: true, loginError: null })
         let remote: CharacterLook | null = null
+        let remotePose: LastPose | null = null
         try {
-          remote = await fetchAppearance(trimmed)
+          const data = await fetchAppearance(trimmed)
+          remote = data.look
+          remotePose = normalizePose(data.lastPose)
         } catch {
           /* server down — fall back to local */
         }
@@ -79,6 +101,7 @@ export const useAppStore = create<AppState>()(
             loginError: null,
             session: { id, email: trimmed, look },
             draftLook: look,
+            lastPose: remotePose,
             screen: 'world',
           })
           return true
@@ -95,6 +118,7 @@ export const useAppStore = create<AppState>()(
           loginError: null,
           session: { id, email: trimmed, look },
           draftLook: look,
+          lastPose: existing?.email === trimmed ? get().lastPose : remotePose,
           screen: existing?.email === trimmed && look.displayName ? 'world' : 'creator',
         })
         return true
@@ -113,13 +137,14 @@ export const useAppStore = create<AppState>()(
         void putAppearance(session.email, look)
       },
 
-      logout: () =>
+      logout: (reason) =>
         set({
           session: null,
           screen: 'login',
-          loginError: null,
+          loginError: reason ?? null,
           loginBusy: false,
           draftLook: { ...DEFAULT_LOOK },
+          lastPose: null,
         }),
 
       goWorld: () => set({ screen: 'world' }),
@@ -127,7 +152,12 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'trueid-office-session',
-      partialize: (s) => ({ session: s.session, draftLook: s.draftLook, screen: s.screen }),
+      partialize: (s) => ({
+        session: s.session,
+        draftLook: s.draftLook,
+        screen: s.screen,
+        lastPose: s.lastPose,
+      }),
       merge: (persisted, current) => {
         const p = persisted as Partial<AppState> | undefined
         const session = p?.session
@@ -139,6 +169,7 @@ export const useAppStore = create<AppState>()(
           ...p,
           session,
           draftLook,
+          lastPose: normalizePose(p?.lastPose) ?? current.lastPose,
         }
       },
     },

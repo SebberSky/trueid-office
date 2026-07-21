@@ -84,9 +84,12 @@ export async function fetchAppearance(email: string) {
   const res = await fetch(
     `${defaultApiBase()}/api/appearance?email=${encodeURIComponent(email.trim().toLowerCase())}`,
   )
-  if (!res.ok) return null
-  const data = (await res.json()) as { look: import('../types').CharacterLook | null }
-  return data.look
+  if (!res.ok) return { look: null, lastPose: null }
+  const data = (await res.json()) as {
+    look: import('../types').CharacterLook | null
+    lastPose?: { x: number; y: number; facing: import('../types').Facing } | null
+  }
+  return { look: data.look ?? null, lastPose: data.lastPose ?? null }
 }
 
 export async function putAppearance(email: string, look: import('../types').CharacterLook) {

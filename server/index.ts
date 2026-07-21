@@ -4,6 +4,7 @@ import type { PeerPresence } from '../src/types'
 import type { PinnedMessage } from '../src/chat/types'
 import type { ClientMsg, ServerMsg } from '../shared/protocol'
 import { ensureDataDir, loadAppearance, saveAppearance } from './appearances'
+import { ensurePositionDir, loadPosition, savePosition, type SavedPose } from './positions'
 import {
   fallGuysWelcomeLobby,
   fallGuysWelcomeRace,
@@ -22,12 +23,17 @@ import {
 const PORT = Number(process.env.PORT || 3001)
 const STALE_MS = 5000
 const PIN_TEXT_MAX = 280
+/** Debounce disk writes while walking. */
+const POSE_SAVE_MS = 2000
 
 type Client = {
   ws: WebSocket
   id: string | null
   email: string | null
   peer: PeerPresence | null
+  /** Skip auto-reconnect leave bookkeeping when we intentionally replace a session. */
+  replaced?: boolean
+  lastPoseSavedAt?: number
 }
 
 const clients = new Set<Client>()
@@ -73,6 +79,48 @@ function occupantsIn(roomId: string): number {
     if (c.peer?.roomId === roomId) n += 1
   }
   return n
+}
+
+function poseFromPeer(peer: PeerPresence | null): SavedPose | null {
+  if (!peer) return null
+  return { x: peer.x, y: peer.y, facing: peer.facing }
+}
+
+function maybeSavePose(client: Client, force = false) {
+  const email = client.email?.trim().toLowerCase()
+  const pose = poseFromPeer(client.peer)
+  if (!email || !pose) return
+  const now = Date.now()
+  if (!force && client.lastPoseSavedAt && now - client.lastPoseSavedAt < POSE_SAVE_MS) return
+  client.lastPoseSavedAt = now
+  void savePosition(email, pose)
+}
+
+/** Drop every other live socket for this email so only the latest device remains. */
+function replaceSessionsForEmail(email: string, keep: Client) {
+  const normalized = email.trim().toLowerCase()
+  for (const c of [...clients]) {
+    if (c === keep) continue
+    if ((c.email ?? '').trim().toLowerCase() !== normalized) continue
+    maybeSavePose(c, true)
+    c.replaced = true
+    const oldId = c.id
+    send(c.ws, {
+      type: 'session-replaced',
+      reason: 'logged_in_elsewhere',
+    })
+    clients.delete(c)
+    try {
+      c.ws.close()
+    } catch {
+      /* ignore */
+    }
+    if (oldId) {
+      broadcast({ type: 'leave', id: oldId })
+      onFallGuysLeave({ clients, send, broadcast }, oldId)
+      onXoLeave({ clients, send, broadcast }, oldId)
+    }
+  }
 }
 
 /** Clear locks when a room is empty. Pins persist until explicitly unpinned. */
@@ -129,8 +177,9 @@ const server = http.createServer(async (req, res) => {
       return
     }
     const look = await loadAppearance(email)
+    const lastPose = await loadPosition(email)
     res.writeHead(200, { 'Content-Type': 'application/json' })
-    res.end(JSON.stringify({ look }))
+    res.end(JSON.stringify({ look, lastPose }))
     return
   }
 
@@ -163,7 +212,7 @@ wss.on('connection', (ws) => {
   const client: Client = { ws, id: null, email: null, peer: null }
   clients.add(client)
 
-  ws.on('message', (raw) => {
+  ws.on('message', async (raw) => {
     let msg: ClientMsg
     try {
       msg = JSON.parse(String(raw)) as ClientMsg
@@ -173,8 +222,13 @@ wss.on('connection', (ws) => {
     }
 
     if (msg.type === 'hello') {
+      const email = String(msg.email || '')
+        .trim()
+        .toLowerCase()
       client.id = msg.id
-      client.email = msg.email
+      client.email = email || null
+      if (email) replaceSessionsForEmail(email, client)
+      const lastPose = email ? await loadPosition(email) : null
       send(ws, {
         type: 'welcome',
         peers: livePeers().filter((p) => p.id !== msg.id),
@@ -184,6 +238,7 @@ wss.on('connection', (ws) => {
         fallguysRace: fallGuysWelcomeRace(),
         xo: xoWelcomeLobby({ clients, send, broadcast }),
         xoGame: xoWelcomeGame(),
+        lastPose,
       })
       return
     }
@@ -191,8 +246,9 @@ wss.on('connection', (ws) => {
     if (msg.type === 'presence') {
       if (client.id && msg.peer.id !== client.id) return
       client.id = msg.peer.id
-      client.email = msg.peer.email
+      client.email = msg.peer.email?.trim().toLowerCase() || client.email
       client.peer = { ...msg.peer, updatedAt: Date.now() }
+      maybeSavePose(client)
       broadcast({ type: 'presence', peer: client.peer }, ws)
       clearEmptyRooms()
       onFallGuysPresence({ clients, send, broadcast }, client)
@@ -340,11 +396,14 @@ wss.on('connection', (ws) => {
   })
 
   ws.on('close', () => {
+    if (client.replaced) return
+    maybeSavePose(client, true)
     const id = client.id
     clients.delete(client)
     if (id) broadcast({ type: 'leave', id })
     clearEmptyRooms()
     onFallGuysLeave({ clients, send, broadcast }, id)
+    onXoLeave({ clients, send, broadcast }, id)
   })
 })
 
@@ -353,15 +412,18 @@ setInterval(() => {
   for (const c of clients) {
     if (c.peer && now - c.peer.updatedAt > STALE_MS) {
       const id = c.peer.id
+      maybeSavePose(c, true)
       c.peer = null
       broadcast({ type: 'leave', id })
       onFallGuysLeave({ clients, send, broadcast }, id)
+      onXoLeave({ clients, send, broadcast }, id)
     }
   }
   clearEmptyRooms()
 }, 2000)
 
 await ensureDataDir()
+await ensurePositionDir()
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`[trueid-office] multiplayer server on http://0.0.0.0:${PORT}  ws://0.0.0.0:${PORT}/ws`)
 })
