@@ -2,6 +2,12 @@ import type { CharacterLook, PeerPresence } from '../src/types'
 import type { ChatMessage, PinnedMessage } from '../src/chat/types'
 import type { ActivityEvent } from '../src/chat/RoomActivity'
 import type { SignalData } from '../src/presence/bus'
+import type {
+  FallGuysLobbyState,
+  FallGuysRaceOver,
+  FallGuysRaceStart,
+  FallGuysRaceUpdate,
+} from '../src/fallguys/types'
 
 /** Client → Server */
 export type ClientMsg =
@@ -18,6 +24,10 @@ export type ClientMsg =
       /** Pin this message, or null to unpin. */
       message: ChatMessage | null
     }
+  | { type: 'fallguys-start' }
+  | { type: 'fallguys-restart' }
+  | { type: 'fallguys-quit' }
+  | { type: 'fallguys-progress'; raceId: number; progress: number; finished: boolean }
 
 /** Server → Client */
 export type ServerMsg =
@@ -26,6 +36,7 @@ export type ServerMsg =
       peers: PeerPresence[]
       lockedRooms: string[]
       pinnedMessages: PinnedMessage[]
+      fallguys?: FallGuysLobbyState
     }
   | { type: 'presence'; peer: PeerPresence }
   | { type: 'leave'; id: string }
@@ -40,6 +51,10 @@ export type ServerMsg =
       byId: string
       byName: string
     }
+  | { type: 'fallguys-lobby'; lobby: FallGuysLobbyState }
+  | { type: 'fallguys-race-start'; race: FallGuysRaceStart }
+  | { type: 'fallguys-race-update'; update: FallGuysRaceUpdate }
+  | { type: 'fallguys-race-over'; result: FallGuysRaceOver }
   | { type: 'error'; message: string }
 
 export type { SignalData, CharacterLook, PeerPresence, ChatMessage, PinnedMessage, ActivityEvent }

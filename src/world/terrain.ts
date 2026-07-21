@@ -1,4 +1,5 @@
 import type { DoorSide, RoomDef, TerrainType } from '../types'
+import { FALLGUYS_ROOM_ID, FALLGUYS_ROOM_NAME } from '../fallguys/types'
 
 export const TILE = 32
 export const MAP_W = 84
@@ -220,6 +221,9 @@ export function generateWorld(seed = 20260717): WorldMap {
   // Guarantee a few visible campus ponds (paths/rooms can wipe natural water)
   stampCampusPonds(tiles, occupied, seed)
 
+  // Fall Guys arena — fixed colorful pad east of plaza / along the main path
+  stampFallGuysArena(tiles, occupied, rooms)
+
   // Spawn on central path near plaza if possible
   let spawn = { x: 42, y: 34 }
   const plaza = rooms.find((r) => r.kind === 'plaza')
@@ -392,7 +396,7 @@ function stampPlaza(tiles: TerrainType[][], room: RoomDef) {
     [room.x + room.w - 1, midY],
     [room.x + room.w - 1, midY + 1],
   ] as const) {
-    tiles[y][x] = 'plaza'
+    if (y >= 0 && y < MAP_H && x >= 0 && x < MAP_W) tiles[y][x] = 'plaza'
   }
 
   // South approach to path
@@ -403,6 +407,47 @@ function stampPlaza(tiles: TerrainType[][], room: RoomDef) {
     }
     if (PATH_ROWS.includes(y) || PATH_ROWS.includes(y - 1)) break
   }
+}
+
+/** Bright rectangular pad for the Fall Guys mini-game lobby. */
+function stampFallGuysArena(
+  tiles: TerrainType[][],
+  occupied: { x: number; y: number; w: number; h: number }[],
+  rooms: RoomDef[],
+) {
+  const candidates = [
+    { x: 58, y: 35, w: 10, h: 8 },
+    { x: 2, y: 35, w: 10, h: 8 },
+    { x: 58, y: 22, w: 10, h: 8 },
+  ]
+  let spot = candidates[0]!
+  for (const c of candidates) {
+    if (!overlapsAny(c, c.w, c.h, occupied)) {
+      spot = c
+      break
+    }
+  }
+  const room: RoomDef = {
+    id: FALLGUYS_ROOM_ID,
+    name: FALLGUYS_ROOM_NAME,
+    x: spot.x,
+    y: spot.y,
+    w: spot.w,
+    h: spot.h,
+    capacity: 16,
+    color: '#ff4fd8',
+    door: 'w',
+    kind: 'plaza',
+  }
+  flattenFootprint(tiles, room.x, room.y, room.w, room.h)
+  stampPlaza(tiles, room)
+  for (let y = room.y + 1; y < room.y + room.h - 1; y++) {
+    for (let x = room.x + 1; x < room.x + room.w - 1; x++) {
+      tiles[y][x] = (x + y) % 2 === 0 ? 'plaza' : 'plazaBorder'
+    }
+  }
+  rooms.push(room)
+  occupied.push({ x: room.x, y: room.y, w: room.w, h: room.h })
 }
 
 function clearDoorApproach(tiles: TerrainType[][], room: RoomDef) {
