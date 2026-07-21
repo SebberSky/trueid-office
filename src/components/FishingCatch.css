@@ -1,0 +1,54 @@
+.fish-catch {
+  pointer-events: none;
+  position: absolute;
+  inset: 0;
+  z-index: 12;
+  display: grid;
+  place-items: center;
+  animation: fishCatchIn 0.25s ease-out;
+}
+
+.fish-catch__frame {
+  width: min(280px, 56vw);
+  padding: 1.1rem 1.25rem 1rem;
+  border-radius: 16px;
+  border: 2px solid rgba(94, 234, 212, 0.55);
+  background: linear-gradient(160deg, rgba(15, 23, 42, 0.92), rgba(15, 60, 70, 0.9));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  text-align: center;
+}
+
+.fish-catch__emoji {
+  font-size: 3.4rem;
+  line-height: 1;
+  filter: drop-shadow(0 6px 12px rgba(0, 0, 0, 0.35));
+}
+
+.fish-catch__label {
+  font-family: var(--font-display);
+  font-size: 1.35rem;
+  font-weight: 800;
+  color: #f8fafc;
+  letter-spacing: -0.02em;
+}
+
+.fish-catch__sub {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: #5eead4;
+}
+
+@keyframes fishCatchIn {
+  from {
+    opacity: 0;
+    transform: scale(0.86);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

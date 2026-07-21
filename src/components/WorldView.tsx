@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { nanoid } from 'nanoid'
 import { useAppStore } from '../store'
-import { TILE, canTraverse, generateWorld, isUnlimited, pixelCenter, roomAt } from '../world/terrain'
+import { TILE, canTraverse, generateWorld, isAtWaterEdge, isUnlimited, nearestWaterCastTarget, pixelCenter, roomAt } from '../world/terrain'
 import { CampusScene } from '../world/CampusScene'
 import { HEARTBEAT_MS, MOVE_SEND_MS, PresenceBus, makePresence } from '../presence/bus'
 import { OfficeSocket } from '../net/OfficeSocket'
@@ -16,7 +16,14 @@ import { ChatPanel } from './ChatPanel'
 import { PollPanel } from './PollPanel'
 import { FloatingEmojis, type FloatEmojiItem } from './FloatingEmojis'
 import { OnlineRoster, type RosterPerson } from './OnlineRoster'
+import { FishingCatchOverlay } from './FishingCatch'
 import { MobileControls } from './MobileControls'
+import {
+  FISH_CATCH_SHOW_MS,
+  randomFishWaitMs,
+  randomFishingCatch,
+  type FishingCatch,
+} from '../fishing/loot'
 import './World.css'
 
 const SPEED = 280
@@ -73,6 +80,14 @@ export function WorldView() {
   const [roster, setRoster] = useState<'server' | 'room' | null>(null)
   const onlineBtnRef = useRef<HTMLButtonElement>(null)
   const roomBtnRef = useRef<HTMLButtonElement>(null)
+  const [fishCatch, setFishCatch] = useState<FishingCatch | null>(null)
+  const [nearWater, setNearWater] = useState(false)
+  const [fishingActive, setFishingActive] = useState(false)
+  const fishTimerRef = useRef<number | null>(null)
+  const fishPhaseRef = useRef<'idle' | 'waiting' | 'catch'>('idle')
+  const fishingActiveRef = useRef(false)
+  const tryStartFishingRef = useRef(() => {})
+  const stopFishingRef = useRef(() => {})
   const [screenFrom, setScreenFrom] = useState<string | null>(null)
   const [mediaError, setMediaError] = useState<string | null>(null)
   const [globalMsgs, setGlobalMsgs] = useState<ChatMessage[]>([])
@@ -333,6 +348,10 @@ export function WorldView() {
           publishRef.current()
         }
       }
+      if (e.code === 'KeyF' && !e.repeat) {
+        e.preventDefault()
+        tryStartFishingRef.current()
+      }
       if (e.code === 'Equal' || e.code === 'NumpadAdd' || e.key === '=' || e.key === '+') {
         e.preventDefault()
         sceneRef.current?.adjustZoom(0.08)
@@ -391,6 +410,7 @@ export function WorldView() {
     let lastNetX = pos.current.x
     let lastNetY = pos.current.y
     let lastNetFacing = facing.current
+    let lastNearWater: boolean | null = null
 
     const resize = () => {
       scene.setSize(wrap.clientWidth, wrap.clientHeight)
@@ -521,6 +541,15 @@ export function WorldView() {
         moving = true
       }
 
+      const atEdge = isAtWaterEdge(map, pos.current.x, pos.current.y)
+      if (atEdge !== lastNearWater) {
+        lastNearWater = atEdge
+        setNearWater(atEdge)
+      }
+      if (fishingActiveRef.current && !atEdge) {
+        stopFishingRef.current()
+      }
+
       const movedNet =
         Math.hypot(pos.current.x - lastNetX, pos.current.y - lastNetY) > 0.5 ||
         facing.current !== lastNetFacing
@@ -557,6 +586,7 @@ export function WorldView() {
     }
     setMediaError(null)
     setVoiceOn(false)
+    sceneRef.current?.setLocalMic(false)
     setHandRaised(false)
     setRaisedHands([])
     setActivePoll(null)
@@ -649,6 +679,7 @@ export function WorldView() {
       const next = !voiceOn
       await mediaRef.current?.setVoice(next)
       setVoiceOn(next)
+      sceneRef.current?.setLocalMic(next)
       if (recorderRef.current?.recording) {
         recorderRef.current.setAudioSources(mediaRef.current?.collectAudioStreams() ?? [])
       }
@@ -681,11 +712,77 @@ export function WorldView() {
     netRef.current?.send({ type: 'room-lock', roomId, locked: !locked })
   }
 
-  // Close room roster when leaving the room
+  const clearFishTimer = useCallback(() => {
+    if (fishTimerRef.current != null) {
+      window.clearTimeout(fishTimerRef.current)
+      fishTimerRef.current = null
+    }
+  }, [])
+
+  const stopFishing = useCallback(() => {
+    clearFishTimer()
+    fishPhaseRef.current = 'idle'
+    fishingActiveRef.current = false
+    setFishingActive(false)
+    setFishCatch(null)
+    sceneRef.current?.setFishingCast(false, null)
+  }, [clearFishTimer])
+  stopFishingRef.current = stopFishing
+
+  const beginFishCast = useCallback(() => {
+    if (!isAtWaterEdge(map, pos.current.x, pos.current.y)) {
+      stopFishing()
+      return
+    }
+    const target = nearestWaterCastTarget(map, pos.current.x, pos.current.y)
+    if (!target) {
+      stopFishing()
+      return
+    }
+    clearFishTimer()
+    fishPhaseRef.current = 'waiting'
+    fishingActiveRef.current = true
+    setFishingActive(true)
+    setFishCatch(null)
+    sceneRef.current?.setFishingCast(true, target)
+    const wait = randomFishWaitMs()
+    fishTimerRef.current = window.setTimeout(() => {
+      if (!fishingActiveRef.current) return
+      if (!isAtWaterEdge(map, pos.current.x, pos.current.y)) {
+        stopFishing()
+        return
+      }
+      const caught = randomFishingCatch()
+      fishPhaseRef.current = 'catch'
+      setFishCatch(caught)
+      sceneRef.current?.setFishingCast(false, null)
+      fishTimerRef.current = window.setTimeout(() => {
+        setFishCatch(null)
+        if (!fishingActiveRef.current) return
+        if (isAtWaterEdge(map, pos.current.x, pos.current.y)) {
+          beginFishCast()
+        } else {
+          stopFishing()
+        }
+      }, FISH_CATCH_SHOW_MS)
+    }, wait)
+  }, [map, clearFishTimer, stopFishing])
+
+  const tryStartFishing = useCallback(() => {
+    if (!worldActiveRef.current) return
+    if (fishPhaseRef.current !== 'idle') return
+    if (!isAtWaterEdge(map, pos.current.x, pos.current.y)) return
+    beginFishCast()
+  }, [map, beginFishCast])
+  tryStartFishingRef.current = tryStartFishing
+
   useEffect(() => {
     if (!roomId && roster === 'room') setRoster(null)
   }, [roomId, roster])
 
+  useEffect(() => () => stopFishing(), [stopFishing])
+
+  const canLockRoom = !!roomId && map.rooms.find((r) => r.id === roomId)?.kind === 'room'
   const roomIsLocked = !!(roomId && lockedRooms.has(roomId))
 
   const roomLabelFor = (id: string | null | undefined) => {
@@ -803,6 +900,13 @@ export function WorldView() {
           }}
           onDone={(id) => setFloatEmojis((prev) => prev.filter((e) => e.id !== id))}
         />
+        <FishingCatchOverlay catchItem={fishCatch} />
+        {nearWater && !fishingActive && (
+          <div className="world__fish-hint">กด F เพื่อตกปลา</div>
+        )}
+        {fishingActive && !fishCatch && (
+          <div className="world__fish-hint is-wait">กำลังรอปลากัด…</div>
+        )}
         {(screenFrom || sharing) && (
           <div className={`world__screen ${screenFs ? 'is-fill' : 'is-pip'}`}>
             <div className="world__screen-bar">
@@ -837,7 +941,7 @@ export function WorldView() {
           </div>
         )}
         <div className="world__hint world__hint--desktop">
-          WASD / ลูกศร เดิน · Space กระโดด · ลูกกลมเมาส์ / +− ซูม
+          WASD / ลูกศร เดิน · Space กระโดด · F ตกปลา (ริมสระ) · ลูกกลมเมาส์ / +− ซูม
         </div>
         <MobileControls
           stickRef={stickRef}

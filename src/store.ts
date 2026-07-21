@@ -9,7 +9,11 @@ import { fetchAppearance, putAppearance } from './net/OfficeSocket'
 const ALLOWED_DOMAINS = ['truedigital.com', 'muze.co.th']
 
 function normalizeLook(look: CharacterLook): CharacterLook {
-  return { ...look, animalKind: normalizeAnimalKind(look.animalKind) }
+  return {
+    ...look,
+    animalKind: normalizeAnimalKind(look.animalKind),
+    displayName: look.displayName.trim().slice(0, 10),
+  }
 }
 
 export function isAllowedEmail(email: string): boolean {

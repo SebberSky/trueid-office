@@ -60,6 +60,8 @@ export class Character3D {
   private readonly jumpSpeed = 5.2
   private readonly jumpGravity = 20
   private label: THREE.Sprite
+  private labelName = ''
+  private labelVoiceOn = false
   private gait: Gait = 'human'
   private animalKind: AnimalKind | null = null
   private wingL: THREE.Object3D | null = null
@@ -79,7 +81,8 @@ export class Character3D {
       this.buildHuman(look)
     }
 
-    this.label = makeNameSprite(look.displayName || 'guest')
+    this.labelName = (look.displayName || 'guest').slice(0, 10)
+    this.label = makeNameSprite(this.labelName, false)
     this.label.position.y = labelYFor(this.animalKind, this.gait)
     this.root.add(this.label)
 
@@ -449,11 +452,21 @@ export class Character3D {
 
 
   setLookName(name: string) {
+    this.setNameplate(name, this.labelVoiceOn)
+  }
+
+  /** Refresh nametag text / mic badge (no-op when unchanged). */
+  setNameplate(name: string, voiceOn: boolean) {
+    const clipped = (name || 'guest').trim().slice(0, 10)
+    if (clipped === this.labelName && voiceOn === this.labelVoiceOn) return
+    const y = this.label.position.y
     this.root.remove(this.label)
     this.label.material.dispose()
     ;(this.label.material as THREE.SpriteMaterial).map?.dispose()
-    this.label = makeNameSprite(name)
-    this.label.position.y = labelYFor(this.animalKind, this.gait)
+    this.labelName = clipped
+    this.labelVoiceOn = voiceOn
+    this.label = makeNameSprite(clipped, voiceOn)
+    this.label.position.y = y
     this.root.add(this.label)
   }
 
@@ -859,27 +872,49 @@ function addHairBlocks(head: THREE.Group, look: CharacterLook) {
   head.add(sides)
 }
 
-function makeNameSprite(name: string) {
+function makeNameSprite(name: string, voiceOn = false) {
   const canvas = document.createElement('canvas')
-  canvas.width = 256
-  canvas.height = 64
+  canvas.width = 320
+  canvas.height = 72
   const ctx = canvas.getContext('2d')!
-  ctx.clearRect(0, 0, 256, 64)
-  ctx.fillStyle = 'rgba(15,23,42,0.8)'
-  ctx.fillRect(28, 18, 200, 28)
-  ctx.strokeStyle = 'rgba(255,255,255,0.25)'
-  ctx.strokeRect(28.5, 18.5, 199, 27)
+  ctx.clearRect(0, 0, 320, 72)
+
+  const display = name.slice(0, 10)
+  ctx.font = '700 28px Karla, sans-serif'
+  const mic = voiceOn ? '🎤 ' : ''
+  const label = `${mic}${display}`
+  const textW = Math.ceil(ctx.measureText(label).width)
+  const padX = 16
+  const boxW = Math.min(300, Math.max(120, textW + padX * 2))
+  const boxH = 36
+  const boxX = (320 - boxW) / 2
+  const boxY = (72 - boxH) / 2
+
+  ctx.fillStyle = voiceOn ? 'rgba(15, 80, 70, 0.88)' : 'rgba(15,23,42,0.8)'
+  ctx.beginPath()
+  const r = 10
+  ctx.moveTo(boxX + r, boxY)
+  ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + boxH, r)
+  ctx.arcTo(boxX + boxW, boxY + boxH, boxX, boxY + boxH, r)
+  ctx.arcTo(boxX, boxY + boxH, boxX, boxY, r)
+  ctx.arcTo(boxX, boxY, boxX + boxW, boxY, r)
+  ctx.closePath()
+  ctx.fill()
+  ctx.strokeStyle = voiceOn ? 'rgba(94, 234, 212, 0.55)' : 'rgba(255,255,255,0.25)'
+  ctx.lineWidth = 2
+  ctx.stroke()
+
   ctx.fillStyle = '#fff'
-  ctx.font = '600 20px Karla, sans-serif'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillText(name.slice(0, 18), 128, 33)
+  ctx.fillText(label, 160, 37)
+
   const tex = new THREE.CanvasTexture(canvas)
-  tex.magFilter = THREE.NearestFilter
-  tex.minFilter = THREE.NearestFilter
+  tex.magFilter = THREE.LinearFilter
+  tex.minFilter = THREE.LinearFilter
   const sprMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false })
   const sprite = new THREE.Sprite(sprMat)
-  sprite.scale.set(1.4, 0.35, 1)
+  sprite.scale.set(voiceOn ? 1.85 : 1.65, 0.42, 1)
   return sprite
 }
 
