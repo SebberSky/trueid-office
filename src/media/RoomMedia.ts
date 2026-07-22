@@ -127,22 +127,22 @@ export class RoomMedia {
           video: false,
         })
       }
-      const needRenegotiate: string[] = []
+      // Always renegotiate after attaching mic. Listen-only joins negotiate the
+      // audio m-line as recvonly/inactive; replaceTrack alone does not upgrade
+      // direction, so remotes would never receive our voice.
       for (const [peerId, pc] of this.pcs) {
-        const hadAudio = this.hasAudioTransceiver(pc)
         this.ensureAudioTransceiver(pc)
+        this.setMicDirection(pc, 'sendrecv')
         for (const track of this.localStream.getAudioTracks()) {
           const sender = this.audioSender(pc)
           if (sender) {
             if (sender.track !== track) await sender.replaceTrack(track)
           } else {
             pc.addTrack(track, this.localStream)
-            needRenegotiate.push(peerId)
           }
         }
-        if (!hadAudio) needRenegotiate.push(peerId)
+        await this.renegotiate(peerId)
       }
-      for (const peerId of new Set(needRenegotiate)) await this.renegotiate(peerId)
     } else if (this.localStream) {
       this.localStream.getTracks().forEach((t) => t.stop())
       this.localStream = null
@@ -151,9 +151,13 @@ export class RoomMedia {
         if (sender) await sender.replaceTrack(null)
         else {
           for (const s of pc.getSenders()) {
-            if (s.track?.kind === 'audio') await s.replaceTrack(null)
+            if (s.track?.kind === 'audio' && !this.isScreenAudio(s.track)) {
+              await s.replaceTrack(null)
+            }
           }
         }
+        // Keep m-line so we can still receive peers while muted.
+        this.setMicDirection(pc, 'sendrecv')
       }
     }
   }
@@ -302,18 +306,26 @@ export class RoomMedia {
   }
 
   /** Create/send SDP offer so remotes pick up newly added tracks (screen share, mic). */
-  private async renegotiate(peerId: string) {
+  private async renegotiate(peerId: string, attempt = 0) {
     const pc = this.pcs.get(peerId)
     if (!pc || !this.roomId) return
-    if (this.makingOffer.has(peerId)) return
-    if (pc.signalingState !== 'stable') return
+    if (this.makingOffer.has(peerId) || pc.signalingState !== 'stable') {
+      // Voice/screen enable often races an in-flight offer/answer — retry shortly.
+      if (attempt < 8) {
+        window.setTimeout(() => void this.renegotiate(peerId, attempt + 1), 120 + attempt * 40)
+      }
+      return
+    }
 
     this.makingOffer.add(peerId)
     try {
       // Always include an audio m-line so we can *receive* voice without enabling our mic.
       this.ensureAudioTransceiver(pc)
+      if (this.localStream) this.setMicDirection(pc, 'sendrecv')
       this.attachTracks(pc)
       const offer = await pc.createOffer()
+      // Glare/rollback may have moved us off stable while awaiting createOffer.
+      if (pc.signalingState !== 'stable' || !this.pcs.has(peerId)) return
       await pc.setLocalDescription(offer)
       const ld = pc.localDescription!
       this.bus.sendSignal(peerId, {
@@ -321,16 +333,17 @@ export class RoomMedia {
         sdp: { type: ld.type, sdp: ld.sdp },
         roomId: this.roomId,
       })
+    } catch {
+      if (attempt < 8) {
+        window.setTimeout(() => void this.renegotiate(peerId, attempt + 1), 150 + attempt * 40)
+      }
     } finally {
       this.makingOffer.delete(peerId)
     }
   }
 
   private hasAudioTransceiver(pc: RTCPeerConnection) {
-    return pc.getTransceivers().some((t) => {
-      const kind = t.sender.track?.kind ?? t.receiver.track?.kind
-      return kind === 'audio'
-    })
+    return !!this.micTransceiver(pc)
   }
 
   /**
@@ -342,16 +355,44 @@ export class RoomMedia {
     pc.addTransceiver('audio', { direction: 'sendrecv' })
   }
 
+  private isScreenAudio(track: MediaStreamTrack) {
+    return !!this.screenStream?.getAudioTracks().some((t) => t.id === track.id)
+  }
+
+  /** Mic transceiver — never the screen-share audio sender. */
+  private micTransceiver(pc: RTCPeerConnection): RTCRtpTransceiver | null {
+    const screenIds = new Set(this.screenStream?.getAudioTracks().map((t) => t.id) ?? [])
+    const audioTrs = pc.getTransceivers().filter((t) => {
+      const kind = t.sender.track?.kind ?? t.receiver.track?.kind
+      return kind === 'audio'
+    })
+    return (
+      audioTrs.find((t) => t.sender.track && this.localStream?.getAudioTracks().some((m) => m.id === t.sender.track!.id)) ??
+      audioTrs.find((t) => !t.sender.track || !screenIds.has(t.sender.track.id)) ??
+      audioTrs[0] ??
+      null
+    )
+  }
+
+  private setMicDirection(pc: RTCPeerConnection, direction: RTCRtpTransceiverDirection) {
+    const tr = this.micTransceiver(pc)
+    if (tr && tr.direction !== direction) tr.direction = direction
+  }
+
   private audioSender(pc: RTCPeerConnection): RTCRtpSender | null {
-    const byTrack = pc.getSenders().find((s) => s.track?.kind === 'audio')
-    if (byTrack) return byTrack
-    const tr = pc.getTransceivers().find((t) => t.receiver.track?.kind === 'audio')
-    return tr?.sender ?? null
+    if (this.localStream) {
+      for (const track of this.localStream.getAudioTracks()) {
+        const hit = pc.getSenders().find((s) => s.track === track)
+        if (hit) return hit
+      }
+    }
+    return this.micTransceiver(pc)?.sender ?? null
   }
 
   private attachTracks(pc: RTCPeerConnection) {
     this.ensureAudioTransceiver(pc)
     if (this.localStream) {
+      this.setMicDirection(pc, 'sendrecv')
       for (const track of this.localStream.getAudioTracks()) {
         const sender = this.audioSender(pc)
         if (sender) {
@@ -388,6 +429,8 @@ export class RoomMedia {
     }
 
     pc.ontrack = (ev) => {
+      // Browsers sometimes deliver remote tracks muted until explicitly enabled.
+      ev.track.enabled = true
       let stream = this.remoteStreams.get(peerId)
       if (!stream) {
         stream = new MediaStream()
@@ -470,8 +513,18 @@ export class RoomMedia {
     if (data.kind === 'offer') {
       if (this.roomId && data.roomId !== this.roomId) return
       const pc = this.ensurePc(from, false)
-      // Glare: ignore remote offer while we are mid-offer to this peer.
-      if (this.makingOffer.has(from)) return
+      // Perfect negotiation: polite peer (higher id) rolls back on glare.
+      const polite = this.selfId > from
+      if (this.makingOffer.has(from)) {
+        if (!polite) return
+        try {
+          await pc.setLocalDescription({ type: 'rollback' })
+        } catch {
+          return
+        } finally {
+          this.makingOffer.delete(from)
+        }
+      }
       try {
         await pc.setRemoteDescription(data.sdp)
         this.attachTracks(pc)

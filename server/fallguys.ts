@@ -21,7 +21,7 @@ type Deps = {
   broadcast: (msg: ServerMsg, except?: WebSocket) => void
 }
 
-const RACE_TIMEOUT_MS = 90_000
+const RACE_TIMEOUT_MS = 180_000
 
 type Phase = 'lobby' | 'racing' | 'results'
 
