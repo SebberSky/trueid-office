@@ -547,18 +547,30 @@ export function WorldView() {
       (streams) => {
         const host = audioHostRef.current
         if (!host) return
-        host.innerHTML = ''
+        const seen = new Set<string>()
         for (const [id, stream] of streams) {
-          if (stream.getAudioTracks().length === 0) continue
-          const audio = document.createElement('audio')
-          audio.autoplay = true
-          audio.muted = false
-          audio.volume = 1
-          audio.setAttribute('playsinline', 'true')
-          audio.srcObject = stream
-          audio.dataset.peer = id
-          host.appendChild(audio)
+          const audioTracks = stream.getAudioTracks().filter((t) => t.readyState !== 'ended')
+          if (audioTracks.length === 0) continue
+          audioTracks.forEach((t) => {
+            t.enabled = true
+          })
+          seen.add(id)
+          let audio = host.querySelector(`audio[data-peer="${CSS.escape(id)}"]`) as HTMLAudioElement | null
+          if (!audio) {
+            audio = document.createElement('audio')
+            audio.autoplay = true
+            audio.muted = false
+            audio.volume = 1
+            audio.setAttribute('playsinline', 'true')
+            audio.dataset.peer = id
+            host.appendChild(audio)
+          }
+          if (audio.srcObject !== stream) audio.srcObject = stream
           void audio.play().catch(() => undefined)
+        }
+        for (const el of [...host.querySelectorAll('audio')]) {
+          const peer = (el as HTMLAudioElement).dataset.peer
+          if (peer && !seen.has(peer)) el.remove()
         }
         resumeAudioRef.current?.()
         if (recorderRef.current?.recording) {

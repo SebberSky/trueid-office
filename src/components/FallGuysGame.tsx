@@ -18,8 +18,133 @@ interface Props {
   onQuit: () => void
 }
 
-const TRACK_LEN = 2400
+const TRACK_LEN = 4800
 const FINISH_X = TRACK_LEN - 80
+
+type Hammer = { kind: 'hammer'; x: number; ang: number; spd: number; len: number }
+type Spinner = { kind: 'spinner'; x: number; ang: number; spd: number; len: number }
+type Pusher = { kind: 'pusher'; x: number; baseX: number; amp: number; t: number; spd: number }
+type Popper = { kind: 'popper'; x: number; t: number; spd: number; phase: number }
+type Bumper = { kind: 'bumper'; x: number; yOff: number; t: number; spd: number; amp: number }
+type Gap = { kind: 'gap'; x: number; w: number }
+type Conveyor = { kind: 'conveyor'; x: number; w: number; dir: -1 | 1 }
+type Gate = { kind: 'gate'; x: number; ang: number; spd: number }
+type Obstacle = Hammer | Spinner | Pusher | Popper | Bumper | Gap | Conveyor | Gate
+
+function buildCourse(seed: number): Obstacle[] {
+  const rng = mulberry32(seed)
+  const out: Obstacle[] = []
+  let x = 380
+  const end = TRACK_LEN - 280
+
+  while (x < end) {
+    const roll = rng()
+    const gap = 90 + rng() * 70
+
+    if (roll < 0.16) {
+      out.push({
+        kind: 'hammer',
+        x,
+        ang: rng() * Math.PI * 2,
+        spd: (1.4 + rng() * 1.4) * (rng() < 0.5 ? 1 : -1),
+        len: 58 + rng() * 28,
+      })
+      x += 200 + gap
+    } else if (roll < 0.3) {
+      out.push({
+        kind: 'spinner',
+        x,
+        ang: rng() * Math.PI * 2,
+        spd: (2.2 + rng() * 1.8) * (rng() < 0.5 ? 1 : -1),
+        len: 48 + rng() * 22,
+      })
+      x += 180 + gap
+    } else if (roll < 0.44) {
+      out.push({
+        kind: 'pusher',
+        x,
+        baseX: x,
+        amp: 55 + rng() * 50,
+        t: rng() * Math.PI * 2,
+        spd: 1.5 + rng() * 1.6,
+      })
+      x += 220 + gap
+    } else if (roll < 0.56) {
+      out.push({
+        kind: 'popper',
+        x,
+        t: 0,
+        spd: 2.2 + rng() * 1.8,
+        phase: rng() * Math.PI * 2,
+      })
+      x += 160 + gap
+    } else if (roll < 0.68) {
+      out.push({
+        kind: 'bumper',
+        x,
+        yOff: -70 - rng() * 40,
+        t: rng() * Math.PI * 2,
+        spd: 1.8 + rng() * 2,
+        amp: 40 + rng() * 35,
+      })
+      x += 200 + gap
+    } else if (roll < 0.8) {
+      const gw = 70 + rng() * 55
+      out.push({ kind: 'gap', x, w: gw })
+      x += gw + 140 + gap
+    } else if (roll < 0.9) {
+      const cw = 140 + rng() * 120
+      out.push({ kind: 'conveyor', x, w: cw, dir: rng() < 0.65 ? -1 : 1 })
+      x += cw + 80 + gap * 0.5
+    } else {
+      out.push({
+        kind: 'gate',
+        x,
+        ang: rng() * Math.PI * 0.5,
+        spd: (1.3 + rng() * 1.2) * (rng() < 0.5 ? 1 : -1),
+      })
+      x += 200 + gap
+    }
+
+    // Occasional dense cluster for variety
+    if (rng() < 0.18 && x < end - 400) {
+      out.push({
+        kind: 'hammer',
+        x: x + 40,
+        ang: rng() * Math.PI * 2,
+        spd: 2 + rng(),
+        len: 62,
+      })
+      out.push({
+        kind: 'popper',
+        x: x + 150,
+        t: 0,
+        spd: 2.8,
+        phase: rng() * Math.PI,
+      })
+      x += 260
+    }
+  }
+  return out
+}
+
+function mulberry32(a: number) {
+  return () => {
+    let t = (a += 0x6d2b79f5)
+    t = Math.imul(t ^ (t >>> 15), t | 1)
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61)
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+function knockBack(
+  state: { px: number; py: number; vy: number; onGround: boolean },
+  force = 110,
+) {
+  state.px -= force
+  state.vy = -220
+  state.onGround = false
+}
 
 /** Simple Fall Guys-style side-scroller race for arena participants / spectators. */
 export function FallGuysGame({
@@ -112,16 +237,9 @@ export function FallGuysGame({
     window.addEventListener('keydown', onDown)
     window.addEventListener('keyup', onUp)
 
-    type Hammer = { x: number; ang: number; spd: number }
-    const hammers: Hammer[] = []
-    for (let x = 420; x < TRACK_LEN - 200; x += 280 + (x % 70)) {
-      hammers.push({ x, ang: Math.random() * Math.PI, spd: 1.6 + (x % 5) * 0.15 })
-    }
+    const obstacles = buildCourse(raceId * 9973 + 42)
 
-    let px = 80
-    let py = 0
-    let vy = 0
-    let onGround = true
+    const player = { px: 80, py: 0, vy: 0, onGround: true }
     let finished = false
     let lastSend = 0
     let camX = 0
@@ -135,48 +253,101 @@ export function FallGuysGame({
       const gy = groundY()
       const watching = spectatingRef.current
 
-      for (const hm of hammers) {
-        hm.ang += hm.spd * dt
+      for (const o of obstacles) {
+        if (o.kind === 'hammer' || o.kind === 'spinner' || o.kind === 'gate') o.ang += o.spd * dt
+        if (o.kind === 'pusher') {
+          o.t += o.spd * dt
+          o.x = o.baseX + Math.sin(o.t) * o.amp
+        }
+        if (o.kind === 'popper') o.t += o.spd * dt
+        if (o.kind === 'bumper') o.t += o.spd * dt
       }
 
       if (!watching && phaseRef.current === 'racing' && !finished) {
         let move = 0
         if (keys.has('ArrowLeft') || keys.has('KeyA')) move -= 1
         if (keys.has('ArrowRight') || keys.has('KeyD')) move += 1
-        px += move * 320 * dt
-        px += 90 * dt
-        if ((keys.has('Space') || keys.has('ArrowUp') || keys.has('KeyW')) && onGround) {
-          vy = -520
-          onGround = false
+        player.px += move * 320 * dt
+        player.px += 90 * dt
+        if ((keys.has('Space') || keys.has('ArrowUp') || keys.has('KeyW')) && player.onGround) {
+          player.vy = -520
+          player.onGround = false
         }
-        vy += 1600 * dt
-        py += vy * dt
-        if (py >= 0) {
-          py = 0
-          vy = 0
-          onGround = true
+        player.vy += 1600 * dt
+        player.py += player.vy * dt
+        if (player.py >= 0) {
+          player.py = 0
+          player.vy = 0
+          player.onGround = true
         }
 
-        for (const hm of hammers) {
-          const tipX = hm.x + Math.cos(hm.ang) * 70
-          const tipY = gy - 40 + Math.sin(hm.ang) * 70
-          const beanX = px
-          const beanY = gy - 28 + py
-          if (Math.hypot(tipX - beanX, tipY - beanY) < 36) {
-            px -= 90
-            vy = -200
-            onGround = false
+        const beanX = player.px
+        const beanY = gy - 28 + player.py
+
+        for (const o of obstacles) {
+          if (o.kind === 'hammer') {
+            const tipX = o.x + Math.cos(o.ang) * o.len
+            const tipY = gy - 40 + Math.sin(o.ang) * o.len
+            if (Math.hypot(tipX - beanX, tipY - beanY) < 34) knockBack(player, 100)
+          } else if (o.kind === 'spinner') {
+            const tipX = o.x + Math.cos(o.ang) * o.len
+            const tipY = gy - 90 + Math.sin(o.ang) * o.len
+            if (Math.hypot(tipX - beanX, tipY - beanY) < 30) knockBack(player, 95)
+          } else if (o.kind === 'pusher') {
+            if (Math.abs(beanX - o.x) < 28 && beanY > gy - 100 && player.py > -95) {
+              player.px = o.x - 36
+              player.vy = -160
+              player.onGround = false
+            }
+          } else if (o.kind === 'popper') {
+            const up = Math.max(0, Math.sin(o.t + o.phase))
+            const height = 20 + up * 78
+            if (Math.abs(beanX - o.x) < 22 && beanY > gy - height - 10 && player.py > -height) {
+              knockBack(player, 85)
+            }
+          } else if (o.kind === 'bumper') {
+            const bx = o.x + Math.sin(o.t) * o.amp
+            const by = gy + o.yOff + Math.cos(o.t * 0.7) * 18
+            if (Math.hypot(bx - beanX, by - beanY) < 38) {
+              player.px += bx > beanX ? -70 : 70
+              player.vy = -340
+              player.onGround = false
+            }
+          } else if (o.kind === 'gap') {
+            if (
+              player.onGround &&
+              beanX > o.x + 8 &&
+              beanX < o.x + o.w - 8 &&
+              player.py >= -2
+            ) {
+              player.px = o.x - 40
+              player.vy = -180
+              player.onGround = false
+            }
+          } else if (o.kind === 'conveyor') {
+            if (
+              player.onGround &&
+              beanX > o.x &&
+              beanX < o.x + o.w &&
+              player.py >= -2
+            ) {
+              player.px += o.dir * 160 * dt
+            }
+          } else if (o.kind === 'gate') {
+            const tipX = o.x + Math.sin(o.ang) * 95
+            const tipY = gy - 130 + Math.cos(o.ang) * 95
+            if (Math.hypot(tipX - beanX, tipY - beanY) < 32) knockBack(player, 105)
           }
         }
 
-        px = Math.max(40, Math.min(FINISH_X, px))
-        if (px >= FINISH_X - 2) {
+        player.px = Math.max(40, Math.min(FINISH_X, player.px))
+        if (player.px >= FINISH_X - 2) {
           finished = true
           setLocalFinished(true)
           onProgressRef.current(1, true)
         } else if (now - lastSend > 100) {
           lastSend = now
-          onProgressRef.current(px / FINISH_X, false)
+          onProgressRef.current(player.px / FINISH_X, false)
         }
       }
 
@@ -185,7 +356,7 @@ export function FallGuysGame({
         const follow = lead ? 40 + lead.progress * (FINISH_X - 40) : FINISH_X * 0.35
         camX += (follow - w * 0.35 - camX) * Math.min(1, dt * 4)
       } else {
-        camX += (px - w * 0.35 - camX) * Math.min(1, dt * 6)
+        camX += (player.px - w * 0.35 - camX) * Math.min(1, dt * 6)
       }
 
       const grad = ctx.createLinearGradient(0, 0, 0, h)
@@ -203,30 +374,126 @@ export function FallGuysGame({
         ctx.fill()
       }
 
+      // Track with gap cutouts
+      const gaps = obstacles.filter((o): o is Gap => o.kind === 'gap')
       ctx.fillStyle = '#f472b6'
-      ctx.fillRect(-camX, gy, TRACK_LEN + 400, h - gy)
+      const drawSeg = (fromWorld: number, toWorld: number) => {
+        if (toWorld <= fromWorld) return
+        ctx.fillRect(fromWorld - camX, gy, toWorld - fromWorld, h - gy)
+      }
+      let cursor = 0
+      for (const g of gaps) {
+        drawSeg(cursor, g.x)
+        cursor = g.x + g.w
+      }
+      drawSeg(cursor, TRACK_LEN + 400)
+
       ctx.fillStyle = '#fb7185'
-      for (let x = 0; x < TRACK_LEN; x += 64) ctx.fillRect(x - camX, gy, 32, 14)
+      for (let x = 0; x < TRACK_LEN; x += 64) {
+        if (gaps.some((g) => x >= g.x && x < g.x + g.w)) continue
+        ctx.fillRect(x - camX, gy, 32, 14)
+      }
+
+      // Pit water under gaps
+      for (const g of gaps) {
+        ctx.fillStyle = '#38bdf8'
+        ctx.fillRect(g.x - camX, gy + 8, g.w, h - gy)
+        ctx.fillStyle = 'rgba(255,255,255,0.35)'
+        ctx.fillRect(g.x - camX + 8, gy + 18, g.w - 16, 6)
+      }
+
+      for (const o of obstacles) {
+        if (o.kind === 'conveyor') {
+          ctx.fillStyle = o.dir < 0 ? '#f59e0b' : '#34d399'
+          ctx.fillRect(o.x - camX, gy - 6, o.w, 18)
+          ctx.fillStyle = '#0f172a'
+          ctx.font = 'bold 14px Karla, sans-serif'
+          ctx.textAlign = 'center'
+          const arrows = o.dir < 0 ? '◀◀◀' : '▶▶▶'
+          ctx.fillText(arrows, o.x - camX + o.w / 2, gy + 8)
+        }
+      }
 
       ctx.fillStyle = '#22c55e'
       ctx.fillRect(FINISH_X - camX, gy - 120, 18, 120)
       ctx.fillStyle = '#fff'
       ctx.font = 'bold 18px Karla, sans-serif'
+      ctx.textAlign = 'left'
       ctx.fillText('FINISH', FINISH_X - camX - 10, gy - 130)
 
-      for (const hm of hammers) {
-        const bx = hm.x - camX
-        const by = gy - 40
-        ctx.strokeStyle = '#334155'
-        ctx.lineWidth = 8
-        ctx.beginPath()
-        ctx.moveTo(bx, by)
-        ctx.lineTo(bx + Math.cos(hm.ang) * 70, by + Math.sin(hm.ang) * 70)
-        ctx.stroke()
-        ctx.fillStyle = '#f97316'
-        ctx.beginPath()
-        ctx.arc(bx + Math.cos(hm.ang) * 70, by + Math.sin(hm.ang) * 70, 18, 0, Math.PI * 2)
-        ctx.fill()
+      for (const o of obstacles) {
+        if (o.kind === 'hammer') {
+          const bx = o.x - camX
+          const by = gy - 40
+          ctx.strokeStyle = '#334155'
+          ctx.lineWidth = 8
+          ctx.beginPath()
+          ctx.moveTo(bx, by)
+          ctx.lineTo(bx + Math.cos(o.ang) * o.len, by + Math.sin(o.ang) * o.len)
+          ctx.stroke()
+          ctx.fillStyle = '#f97316'
+          ctx.beginPath()
+          ctx.arc(bx + Math.cos(o.ang) * o.len, by + Math.sin(o.ang) * o.len, 18, 0, Math.PI * 2)
+          ctx.fill()
+        } else if (o.kind === 'spinner') {
+          const bx = o.x - camX
+          const by = gy - 90
+          ctx.strokeStyle = '#7c3aed'
+          ctx.lineWidth = 10
+          ctx.beginPath()
+          ctx.moveTo(bx - Math.cos(o.ang) * o.len, by - Math.sin(o.ang) * o.len)
+          ctx.lineTo(bx + Math.cos(o.ang) * o.len, by + Math.sin(o.ang) * o.len)
+          ctx.stroke()
+          ctx.fillStyle = '#c084fc'
+          ctx.beginPath()
+          ctx.arc(bx, by, 12, 0, Math.PI * 2)
+          ctx.fill()
+        } else if (o.kind === 'pusher') {
+          ctx.fillStyle = '#ef4444'
+          roundRect(ctx, o.x - camX - 18, gy - 95, 36, 95, 8)
+          ctx.fill()
+          ctx.fillStyle = '#fecaca'
+          ctx.fillRect(o.x - camX - 10, gy - 80, 20, 12)
+        } else if (o.kind === 'popper') {
+          const up = Math.max(0, Math.sin(o.t + o.phase))
+          const height = 20 + up * 78
+          ctx.fillStyle = '#eab308'
+          roundRect(ctx, o.x - camX - 14, gy - height, 28, height, 6)
+          ctx.fill()
+          ctx.fillStyle = '#a16207'
+          ctx.beginPath()
+          ctx.moveTo(o.x - camX, gy - height - 10)
+          ctx.lineTo(o.x - camX - 12, gy - height + 8)
+          ctx.lineTo(o.x - camX + 12, gy - height + 8)
+          ctx.closePath()
+          ctx.fill()
+        } else if (o.kind === 'bumper') {
+          const bx = o.x + Math.sin(o.t) * o.amp - camX
+          const by = gy + o.yOff + Math.cos(o.t * 0.7) * 18
+          ctx.fillStyle = '#ec4899'
+          ctx.beginPath()
+          ctx.arc(bx, by, 26, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.fillStyle = '#fce7f3'
+          ctx.beginPath()
+          ctx.arc(bx - 6, by - 6, 8, 0, Math.PI * 2)
+          ctx.fill()
+        } else if (o.kind === 'gate') {
+          const bx = o.x - camX
+          const by = gy - 130
+          ctx.strokeStyle = '#0ea5e9'
+          ctx.lineWidth = 9
+          ctx.beginPath()
+          ctx.moveTo(bx, by)
+          ctx.lineTo(bx + Math.sin(o.ang) * 95, by + Math.cos(o.ang) * 95)
+          ctx.stroke()
+          ctx.fillStyle = '#38bdf8'
+          ctx.beginPath()
+          ctx.arc(bx + Math.sin(o.ang) * 95, by + Math.cos(o.ang) * 95, 16, 0, Math.PI * 2)
+          ctx.fill()
+          ctx.fillStyle = '#0369a1'
+          ctx.fillRect(bx - 10, by - 8, 20, 16)
+        }
       }
 
       for (const s of scoresRef.current) {
@@ -239,12 +506,12 @@ export function FallGuysGame({
         }
       }
       if (!watching) {
-        drawBean(ctx, px - camX, gy - 28 + py, selfName.slice(0, 8), '#38bdf8', 1)
+        drawBean(ctx, player.px - camX, gy - 28 + player.py, selfName.slice(0, 8), '#38bdf8', 1)
       }
 
       const barProg = watching
         ? Math.max(0, ...scoresRef.current.map((s) => s.progress))
-        : Math.min(1, px / FINISH_X)
+        : Math.min(1, player.px / FINISH_X)
       ctx.fillStyle = 'rgba(15,23,42,0.55)'
       ctx.fillRect(16, 16, w - 32, 14)
       ctx.fillStyle = watching ? '#c084fc' : '#f472b6'
@@ -329,6 +596,24 @@ export function FallGuysGame({
       )}
     </div>
   )
+}
+
+function roundRect(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  const rr = Math.min(r, w / 2, h / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + rr, y)
+  ctx.arcTo(x + w, y, x + w, y + h, rr)
+  ctx.arcTo(x + w, y + h, x, y + h, rr)
+  ctx.arcTo(x, y + h, x, y, rr)
+  ctx.arcTo(x, y, x + w, y, rr)
+  ctx.closePath()
 }
 
 function drawBean(
