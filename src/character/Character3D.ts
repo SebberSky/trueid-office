@@ -824,11 +824,13 @@ export class Character3D {
     if (this.crouchAmt > 0.001) {
       this.label.position.y *= 1 - this.crouchAmt * 0.38
     }
-    // Poison tremor — after gait so it isn't wiped by settle/walk
+    // Poison tremor — absolute offset so it never drifts away from the nameplate
     if (this.poisonShakeT > 0) {
       const shake = Math.sin(this.poisonShakeT * 42) * 0.055
-      this.body.position.x += shake
+      this.body.position.x = shake
       this.body.rotation.z += shake * 0.9
+    } else {
+      this.body.position.x = 0
     }
     if (this.speakSprite?.visible) {
       this.speakSprite.position.y = this.label.position.y + 0.48

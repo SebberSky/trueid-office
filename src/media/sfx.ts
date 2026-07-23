@@ -51,19 +51,19 @@ export function setPublicChatAlertMuted(muted: boolean) {
 }
 
 export function playMetallicClang() {
-  play('/sounds/metallic-clang.mp3', 0.75)
+  play('/sounds/metallic-clang.mp3', 0.28)
 }
 
 export function playPoisonSpit() {
-  play('/sounds/poison-spit.mp3', 0.65)
+  play('/sounds/poison-spit.mp3', 0.22)
 }
 
 export function playGodzillaBite() {
-  play('/sounds/godzilla-bite.mp3', 0.8)
+  play('/sounds/godzilla-bite.mp3', 0.3)
 }
 
 export function playDragonFire() {
-  play('/sounds/dragon-fire.mp3', 0.75)
+  play('/sounds/dragon-fire.mp3', 0.26)
 }
 
 /** Incoming global or room chat (quieter; respects mute). */

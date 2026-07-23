@@ -1104,7 +1104,7 @@ export function WorldView() {
     }
     try {
       const blob = await rec.stop()
-      downloadRecording(blob)
+      if (blob.size > 0) downloadRecording(blob)
     } catch {
       /* ignore */
     }
@@ -1118,7 +1118,11 @@ export function WorldView() {
     try {
       if (recording && recorderRef.current?.recording) {
         const blob = await recorderRef.current.stop()
-        downloadRecording(blob)
+        if (blob.size <= 0) {
+          setMediaError('ไฟล์อัดว่าง — ลองอัดใหม่อีกครั้ง')
+        } else {
+          downloadRecording(blob)
+        }
         recorderRef.current = null
         setRecording(false)
         return
