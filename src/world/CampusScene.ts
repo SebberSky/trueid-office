@@ -26,6 +26,7 @@ type PeerMotion = {
   facing: Facing
   lastJumpAt: number
   lastFireAt: number
+  lastSpitAt: number
   lastBiteAt: number
 }
 
@@ -758,6 +759,17 @@ export class CampusScene {
     )
   }
 
+  /** Snake poison spit (E) — cyan streams ~3 tiles + poison anyone in the spray. */
+  spitPoison() {
+    this.player.triggerPoisonSpit()
+    this.applyPoisonSpray(
+      this.player,
+      this.lastLocalPos.x,
+      this.lastLocalPos.y,
+      this.lastLocalPos.facing,
+    )
+  }
+
   /** Godzilla bite (E) — VFX + blood-stain anyone directly in front. */
   bite() {
     this.player.triggerBite()
@@ -805,7 +817,47 @@ export class CampusScene {
     }
   }
 
-  /** Narrow front bite — only targets standing right ahead of the attacker. */
+  /** Snake poison spray — ~3 tiles ahead, narrow stream. */
+  private applyPoisonSpray(
+    attacker: Character3D,
+    ox: number,
+    oy: number,
+    facing: Facing,
+  ) {
+    const dir =
+      facing === 'down'
+        ? { x: 0, y: 1 }
+        : facing === 'up'
+          ? { x: 0, y: -1 }
+          : facing === 'left'
+            ? { x: -1, y: 0 }
+            : { x: 1, y: 0 }
+    const range = TILE * 3
+    const halfWidth = TILE * 0.7
+
+    const tryHit = (avatar: Character3D, x: number, y: number) => {
+      if (avatar === attacker) return
+      const dx = x - ox
+      const dy = y - oy
+      const along = dx * dir.x + dy * dir.y
+      if (along < TILE * 0.25 || along > range) return
+      const lat = Math.abs(dx * dir.y - dy * dir.x)
+      if (lat > halfWidth) return
+      avatar.applyPoison()
+    }
+
+    tryHit(this.player, this.lastLocalPos.x, this.lastLocalPos.y)
+    for (const [id, motion] of this.peerMotion) {
+      const avatar = this.peers.get(id)
+      if (avatar) tryHit(avatar, motion.x, motion.y)
+    }
+  }
+
+  /**
+   * Godzilla bite hitbox — matches mesh reach + body width.
+   * Head rests at z≈0.2, lunges +0.55, snout/jaw ≈+0.45; scale 0.88.
+   * Lateral half-width = full torso width so sides cover about one body-width.
+   */
   private applyBiteFront(
     attacker: Character3D,
     ox: number,
@@ -820,15 +872,25 @@ export class CampusScene {
           : facing === 'left'
             ? { x: -1, y: 0 }
             : { x: 1, y: 0 }
-    const range = TILE * 1.35
-    const halfWidth = TILE * 0.55
+
+    const scale = 0.88
+    const headRestZ = 0.2
+    const headLunge = 0.55
+    const snout = 0.45
+    const torsoW = 0.95
+    // Peak mouth reach in tile units, plus a little for the target's body radius
+    const biteReachTiles = (headRestZ + headLunge + snout) * scale + 0.4
+    const range = TILE * biteReachTiles
+    // Side coverage ≈ Godzilla body width (center → edge = one torso width)
+    const halfWidth = TILE * torsoW * scale
 
     const tryHit = (avatar: Character3D, x: number, y: number) => {
       if (avatar === attacker) return
       const dx = x - ox
       const dy = y - oy
       const along = dx * dir.x + dy * dir.y
-      if (along < TILE * 0.25 || along > range) return
+      // Allow near-overlap; still must be in front of the chest
+      if (along < TILE * 0.1 || along > range) return
       const lat = Math.abs(dx * dir.y - dy * dir.x)
       if (lat > halfWidth) return
       avatar.applyBloodStain()
@@ -905,6 +967,7 @@ export class CampusScene {
           facing: p.facing,
           lastJumpAt: p.jumpAt ?? 0,
           lastFireAt: p.fireAt ?? 0,
+          lastSpitAt: p.spitAt ?? 0,
           lastBiteAt: p.biteAt ?? 0,
         }
         this.peerMotion.set(p.id, motion)
@@ -923,6 +986,11 @@ export class CampusScene {
         motion.lastFireAt = p.fireAt
         avatar.triggerFireBreath()
         this.applyFireCone(avatar, motion.x, motion.y, motion.facing)
+      }
+      if (p.spitAt && p.spitAt !== motion.lastSpitAt) {
+        motion.lastSpitAt = p.spitAt
+        avatar.triggerPoisonSpit()
+        this.applyPoisonSpray(avatar, motion.x, motion.y, motion.facing)
       }
       if (p.biteAt && p.biteAt !== motion.lastBiteAt) {
         motion.lastBiteAt = p.biteAt

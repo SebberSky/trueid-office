@@ -76,6 +76,8 @@ export class Character3D {
   private crouchAmt = 0
   private fireT = 0
   private fireGroup: THREE.Group | null = null
+  private spitT = 0
+  private spitGroup: THREE.Group | null = null
   private biteT = 0
   private jaw: THREE.Object3D | null = null
   private headRestZ = 0
@@ -93,6 +95,14 @@ export class Character3D {
   private bloodParts: { mat: THREE.MeshLambertMaterial; orig: THREE.Color }[] = []
   private static readonly BLOOD_HOLD = 5
   private static readonly BLOOD_COLOR = new THREE.Color(0xb91c1c)
+  /** Poison stains — dark purple spots + shake, then fade. */
+  private poisonHoldT = 0
+  private poisonFadeT = 0
+  private poisonFadeDur = 0.9
+  private poisonParts: { mat: THREE.MeshLambertMaterial; orig: THREE.Color }[] = []
+  private poisonShakeT = 0
+  private static readonly POISON_HOLD = 5
+  private static readonly POISON_COLOR = new THREE.Color(0x4a0e6b)
 
   constructor(look: CharacterLook) {
     this.root.add(this.body)
@@ -374,10 +384,13 @@ export class Character3D {
 
   private buildSnake(fur: string) {
     this.segments = []
+    // Keep belly clearly above the ground plane (was clipping into terrain).
+    const segH = 0.34
+    const bellyY = segH / 2 + 0.14
     for (let i = 0; i < 10; i++) {
       const w = 0.42 - i * 0.012
-      const seg = voxel(w, 0.34, 0.32, i % 2 ? shade(fur, -20) : fur)
-      seg.position.set(0, 0.2, 0.95 - i * 0.3)
+      const seg = voxel(w, segH, 0.32, i % 2 ? shade(fur, -20) : fur)
+      seg.position.set(0, bellyY, 0.95 - i * 0.3)
       this.body.add(seg)
       this.segments.push(seg)
     }
@@ -386,9 +399,10 @@ export class Character3D {
     this.leftArm = this.segments[4] ?? new THREE.Group()
     this.rightArm = this.segments[5] ?? new THREE.Group()
 
-    this.headG.position.set(0, 0.32, 1.25)
+    this.headG.position.set(0, bellyY + 0.12, 1.25)
     this.body.add(this.headG)
     addSnakeHead(this.headG, fur)
+    this.restY = 0
   }
 
   private buildDragon(fur: string) {
@@ -592,6 +606,33 @@ export class Character3D {
     this.fireGroup.visible = true
   }
 
+  /** Snake poison spit — cyan streams reaching ~3 tiles. */
+  triggerPoisonSpit() {
+    if (this.animalKind !== 'snake') return
+    if (this.spitT > 0.05) return
+    this.spitT = 0.55
+    if (!this.spitGroup) {
+      this.spitGroup = new THREE.Group()
+      this.headG.add(this.spitGroup)
+      const colors = [0x7dd3fc, 0x38bdf8, 0xa5f3fc, 0xe0f2fe]
+      for (let i = 0; i < 7; i++) {
+        const drop = new THREE.Mesh(
+          new THREE.CapsuleGeometry(0.04 + i * 0.006, 0.18 + i * 0.05, 4, 8),
+          new THREE.MeshBasicMaterial({
+            color: colors[i % colors.length],
+            transparent: true,
+            opacity: 0.92,
+            depthWrite: false,
+          }),
+        )
+        drop.rotation.x = Math.PI / 2
+        drop.position.set((i % 2 === 0 ? -1 : 1) * 0.025 * (i % 3), -0.04, 0.4 + i * 0.22)
+        this.spitGroup.add(drop)
+      }
+    }
+    this.spitGroup.visible = true
+  }
+
   /** Godzilla bite — head lunge + jaw snap. */
   triggerBite() {
     if (this.animalKind !== 'godzilla') return
@@ -629,6 +670,25 @@ export class Character3D {
     }
   }
 
+  /** Partial dark-purple poison stains + shake — hold ~5s, then fade. */
+  applyPoison(holdSec = Character3D.POISON_HOLD, fadeSec = 0.9) {
+    this.ensureBurnParts()
+    const pool = [...this.burnParts]
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[pool[i], pool[j]] = [pool[j]!, pool[i]!]
+    }
+    const n = Math.max(2, Math.min(pool.length, Math.ceil(pool.length * 0.32)))
+    this.poisonParts = pool.slice(0, n).map((p) => ({ mat: p.mat, orig: p.orig.clone() }))
+    this.poisonHoldT = holdSec
+    this.poisonFadeT = 0
+    this.poisonFadeDur = fadeSec
+    this.poisonShakeT = holdSec
+    for (const p of this.poisonParts) {
+      p.mat.color.copy(p.orig).lerp(Character3D.POISON_COLOR, 0.88)
+    }
+  }
+
   isBreathingFire() {
     return this.fireT > 0
   }
@@ -660,9 +720,11 @@ export class Character3D {
   ) {
     this.stepJump(dt)
     this.stepFire(dt)
+    this.stepSpit(dt)
     this.stepBite(dt)
     this.stepBurn(dt)
     this.stepBlood(dt)
+    this.stepPoison(dt)
     this.stepCrouch(dt, crouching)
     this.root.position.set(px, py + this.jumpY, pz)
     const yaw =
@@ -679,9 +741,19 @@ export class Character3D {
     } else {
       this.settle()
     }
-    // Crouch label offset after gait code which may rewrite label Y
+    // Always derive label height from a stable base each frame.
+    // (Old code multiplied crouch into label.y every tick, so it collapsed to the feet.)
+    if (!(canHoverFly && overWater)) {
+      this.label.position.y = this.labelBaseY
+    }
     if (this.crouchAmt > 0.001) {
       this.label.position.y *= 1 - this.crouchAmt * 0.38
+    }
+    // Poison tremor — after gait so it isn't wiped by settle/walk
+    if (this.poisonShakeT > 0) {
+      const shake = Math.sin(this.poisonShakeT * 42) * 0.055
+      this.body.position.x += shake
+      this.body.rotation.z += shake * 0.9
     }
   }
 
@@ -720,6 +792,30 @@ export class Character3D {
     if (this.fireT <= 0) {
       this.fireGroup.visible = false
       this.fireT = 0
+    }
+  }
+
+  private stepSpit(dt: number) {
+    if (this.spitT <= 0 || !this.spitGroup) return
+    this.spitT -= dt
+    const life = Math.max(0, this.spitT / 0.55)
+    this.spitGroup.visible = life > 0
+    this.spitGroup.children.forEach((child, i) => {
+      const m = child as THREE.Mesh
+      const mat = m.material as THREE.MeshBasicMaterial
+      mat.opacity = 0.15 + life * 0.8
+      // Reach ~3 tiles in front (snake scale 0.68, head at z≈1.25)
+      const travel = (1 - life) * 2.4
+      m.position.set(
+        (i % 2 === 0 ? -1 : 1) * 0.025 * (i % 3),
+        -0.04 - travel * 0.04,
+        0.4 + i * 0.22 + travel,
+      )
+      m.scale.setScalar(0.8 + (1 - life) * 0.55)
+    })
+    if (this.spitT <= 0) {
+      this.spitGroup.visible = false
+      this.spitT = 0
     }
   }
 
@@ -793,6 +889,31 @@ export class Character3D {
       this.bloodFadeT = 0
       for (const p of this.bloodParts) p.mat.color.copy(p.orig)
       this.bloodParts = []
+    }
+  }
+
+  private stepPoison(dt: number) {
+    if (this.poisonShakeT > 0) {
+      this.poisonShakeT = Math.max(0, this.poisonShakeT - dt)
+    }
+    if (this.poisonHoldT <= 0 && this.poisonFadeT <= 0) return
+    if (this.poisonHoldT > 0) {
+      this.poisonHoldT -= dt
+      if (this.poisonHoldT > 0) return
+      this.poisonHoldT = 0
+      this.poisonFadeT = this.poisonFadeDur
+    }
+    if (this.poisonFadeT <= 0) return
+    this.poisonFadeT -= dt
+    const t = 1 - Math.max(0, this.poisonFadeT) / this.poisonFadeDur
+    for (const p of this.poisonParts) {
+      const stained = p.orig.clone().lerp(Character3D.POISON_COLOR, 0.88)
+      p.mat.color.copy(stained).lerp(p.orig, t)
+    }
+    if (this.poisonFadeT <= 0) {
+      this.poisonFadeT = 0
+      for (const p of this.poisonParts) p.mat.color.copy(p.orig)
+      this.poisonParts = []
     }
   }
 

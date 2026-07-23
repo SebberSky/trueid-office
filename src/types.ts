@@ -7,7 +7,7 @@ export type AnimalKind =
   | 'bunny' // hop
   | 'bird' // flies while moving / over water
   | 'worm' // undulate
-  | 'snake' // slither
+  | 'snake' // slither, spits poison (E)
   | 'dragon' // walks on land, flies over water, breathes fire (E)
   | 'godzilla' // bipedal kaiju, bites (E)
   | 'yoda' // tiny shuffle
@@ -121,6 +121,8 @@ export interface PeerPresence {
   jumpAt?: number
   /** Timestamp of last dragon fire breath — remotes replay the VFX when this changes. */
   fireAt?: number
+  /** Timestamp of last snake poison spit — remotes replay the VFX when this changes. */
+  spitAt?: number
   /** Timestamp of last Godzilla bite — remotes replay the VFX when this changes. */
   biteAt?: number
   /** Holding crouch (Ctrl) — remotes mirror the squat pose. */

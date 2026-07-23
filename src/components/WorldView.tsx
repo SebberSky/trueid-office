@@ -236,6 +236,7 @@ export function WorldView() {
 
   const jumpAtRef = useRef(0)
   const fireAtRef = useRef(0)
+  const spitAtRef = useRef(0)
   const biteAtRef = useRef(0)
   const crouchingRef = useRef(false)
   const fishCastRef = useRef<{ x: number; y: number } | null>(null)
@@ -260,6 +261,7 @@ export function WorldView() {
         crouchingRef.current || undefined,
         biteAtRef.current || undefined,
         fishCastRef.current,
+        spitAtRef.current || undefined,
       ),
     )
   }, [map, session, voiceOn, sharing])
@@ -675,6 +677,10 @@ export function WorldView() {
         } else if (kind === 'godzilla') {
           sceneRef.current?.bite()
           biteAtRef.current = Date.now()
+          publishRef.current()
+        } else if (kind === 'snake') {
+          sceneRef.current?.spitPoison()
+          spitAtRef.current = Date.now()
           publishRef.current()
         }
       }
