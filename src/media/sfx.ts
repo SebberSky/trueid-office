@@ -33,6 +33,10 @@ export function playGodzillaBite() {
   play('/sounds/godzilla-bite.mp3', 0.8)
 }
 
+export function playDragonFire() {
+  play('/sounds/dragon-fire.mp3', 0.75)
+}
+
 /** Incoming chat — global, room, or DM from someone else. */
 export function playChatIncoming() {
   play('/sounds/chat-incoming.mp3', 0.7)
