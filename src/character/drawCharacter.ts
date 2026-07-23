@@ -213,6 +213,37 @@ function drawAnimal(
     return
   }
 
+  if (kind === 'godzilla') {
+    ctx.save()
+    ctx.scale(1.35, 1.35)
+    // Legs
+    block(ctx, -14, 6, 10, 18, shade(fur, -20))
+    block(ctx, 4, 6, 10, 18, shade(fur, -20))
+    // Torso upright
+    block(ctx, -16, -18, 32, 28, fur)
+    block(ctx, -10, -12, 20, 12, shade(fur, 25))
+    // Arms
+    block(ctx, -24, -14, 8, 16, shade(fur, -15))
+    block(ctx, 16, -14, 8, 16, shade(fur, -15))
+    // Dorsal plates
+    block(ctx, -4, -28, 4, 10, accent)
+    block(ctx, -2, -32, 4, 10, accent)
+    block(ctx, 0, -28, 4, 10, accent)
+    // Head
+    block(ctx, -12, -40, 24, 18, fur)
+    block(ctx, -8, -34, 16, 10, shade(fur, -20))
+    if (face) {
+      block(ctx, -8, -36, 5, 4, '#f5e050')
+      block(ctx, 3, -36, 5, 4, '#f5e050')
+      block(ctx, -6, -28, 12, 4, '#1a1a1a')
+    }
+    // Tail
+    block(ctx, -4, 10, 8, 8, fur)
+    block(ctx, -2, 16, 6, 8, accent)
+    ctx.restore()
+    return
+  }
+
   if (kind === 'yoda') {
     block(ctx, -8, 8, 6, 10, shade(fur, -20))
     block(ctx, 2, 8, 6, 10, shade(fur, -20))

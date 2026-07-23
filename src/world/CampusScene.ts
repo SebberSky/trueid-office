@@ -26,6 +26,26 @@ type PeerMotion = {
   facing: Facing
   lastJumpAt: number
   lastFireAt: number
+  lastBiteAt: number
+}
+
+type FishingRig = {
+  group: THREE.Group
+  bobber: THREE.Group
+  rod: THREE.Group
+  line: THREE.Line
+  ripples: THREE.Mesh[]
+  active: boolean
+  bobberPx: { x: number; y: number }
+  clock: number
+  castT: number
+  nibbleUntil: number
+  hand: THREE.Vector3
+  bob: THREE.Vector3
+  mid: THREE.Vector3
+  tip: THREE.Vector3
+  rodDir: THREE.Vector3
+  up: THREE.Vector3
 }
 
 export class CampusScene {
@@ -61,23 +81,8 @@ export class CampusScene {
   private camPanZ = 0
   private readonly headWorld = new THREE.Vector3()
   private readonly headNdc = new THREE.Vector3()
-  private fishingGroup = new THREE.Group()
-  private fishingBobber: THREE.Group | null = null
-  private fishingRod: THREE.Group | null = null
-  private fishingLine: THREE.Line | null = null
-  private fishingRipples: THREE.Mesh[] = []
-  private fishingActive = false
-  private fishingBobberPx = { x: 0, y: 0 }
-  private fishingClock = 0
-  /** 0 = just cast from hand, 1 = landed on water. */
-  private fishingCastT = 1
-  private fishingNibbleUntil = 0
-  private readonly fishHand = new THREE.Vector3()
-  private readonly fishBob = new THREE.Vector3()
-  private readonly fishMid = new THREE.Vector3()
-  private readonly fishTip = new THREE.Vector3()
-  private readonly fishRodDir = new THREE.Vector3()
-  private readonly fishUp = new THREE.Vector3(0, 1, 0)
+  private localFishing: FishingRig | null = null
+  private peerFishing = new Map<string, FishingRig>()
   private playerLabelName = ''
 
   constructor(canvas: HTMLCanvasElement, map: WorldMap, look: CharacterLook) {
@@ -134,52 +139,8 @@ export class CampusScene {
     this.playerLabelName = (look.displayName || 'guest').slice(0, 10)
     this.scene.add(this.player.root)
 
-    this.fishingGroup.visible = false
-    this.fishingRod = makeFishingRod()
-    this.fishingGroup.add(this.fishingRod)
-    this.fishingBobber = makeFishingBobber()
-    this.fishingGroup.add(this.fishingBobber)
-
-    // Sagging line (rod tip → mid → bobber)
-    const lineGeo = new THREE.BufferGeometry().setFromPoints([
-      new THREE.Vector3(),
-      new THREE.Vector3(),
-      new THREE.Vector3(),
-    ])
-    this.fishingLine = new THREE.Line(
-      lineGeo,
-      new THREE.LineBasicMaterial({
-        color: 0xf1f5f9,
-        transparent: true,
-        opacity: 1,
-        depthTest: false,
-        depthWrite: false,
-      }),
-    )
-    this.fishingLine.renderOrder = 20
-    this.fishingLine.frustumCulled = false
-    this.fishingGroup.add(this.fishingLine)
-
-    for (let i = 0; i < 3; i++) {
-      const ring = new THREE.Mesh(
-        new THREE.RingGeometry(0.12, 0.18, 32),
-        new THREE.MeshBasicMaterial({
-          color: 0xdbeafe,
-          transparent: true,
-          opacity: 0,
-          side: THREE.DoubleSide,
-          depthWrite: false,
-          depthTest: false,
-        }),
-      )
-      ring.rotation.x = -Math.PI / 2
-      ring.visible = false
-      ring.renderOrder = 19
-      ring.frustumCulled = false
-      this.fishingRipples.push(ring)
-      this.fishingGroup.add(ring)
-    }
-    this.scene.add(this.fishingGroup)
+    this.localFishing = createFishingRig()
+    this.scene.add(this.localFishing.group)
   }
 
   private buildTerrain(map: WorldMap) {
@@ -797,6 +758,17 @@ export class CampusScene {
     )
   }
 
+  /** Godzilla bite (E) — VFX + blood-stain anyone directly in front. */
+  bite() {
+    this.player.triggerBite()
+    this.applyBiteFront(
+      this.player,
+      this.lastLocalPos.x,
+      this.lastLocalPos.y,
+      this.lastLocalPos.facing,
+    )
+  }
+
   /** Char avatars standing in front of a dragon's breath. */
   private applyFireCone(
     attacker: Character3D,
@@ -833,6 +805,42 @@ export class CampusScene {
     }
   }
 
+  /** Narrow front bite — only targets standing right ahead of the attacker. */
+  private applyBiteFront(
+    attacker: Character3D,
+    ox: number,
+    oy: number,
+    facing: Facing,
+  ) {
+    const dir =
+      facing === 'down'
+        ? { x: 0, y: 1 }
+        : facing === 'up'
+          ? { x: 0, y: -1 }
+          : facing === 'left'
+            ? { x: -1, y: 0 }
+            : { x: 1, y: 0 }
+    const range = TILE * 1.35
+    const halfWidth = TILE * 0.55
+
+    const tryHit = (avatar: Character3D, x: number, y: number) => {
+      if (avatar === attacker) return
+      const dx = x - ox
+      const dy = y - oy
+      const along = dx * dir.x + dy * dir.y
+      if (along < TILE * 0.25 || along > range) return
+      const lat = Math.abs(dx * dir.y - dy * dir.x)
+      if (lat > halfWidth) return
+      avatar.applyBloodStain()
+    }
+
+    tryHit(this.player, this.lastLocalPos.x, this.lastLocalPos.y)
+    for (const [id, motion] of this.peerMotion) {
+      const avatar = this.peers.get(id)
+      if (avatar) tryHit(avatar, motion.x, motion.y)
+    }
+  }
+
   setLocalMic(voiceOn: boolean) {
     this.player.setNameplate(this.playerLabelName, voiceOn)
   }
@@ -855,112 +863,19 @@ export class CampusScene {
 
   /** Show / hide the local fishing line + bobber toward a pond cast target (pixel coords). */
   setFishingCast(active: boolean, targetPx: { x: number; y: number } | null = null) {
-    this.fishingActive = active && !!targetPx
-    this.fishingGroup.visible = this.fishingActive
-    if (targetPx) {
-      this.fishingBobberPx = { x: targetPx.x, y: targetPx.y }
-      this.fishingClock = 0
-      this.fishingCastT = 0
-      this.fishingNibbleUntil = 0
-      for (const ring of this.fishingRipples) {
-        ring.visible = false
-        ;(ring.material as THREE.MeshBasicMaterial).opacity = 0
-      }
-    }
+    if (!this.localFishing) return
+    setFishingRigActive(this.localFishing, active && !!targetPx, targetPx)
   }
 
   private updateFishingVisual(dt: number) {
-    if (!this.fishingActive || !this.fishingBobber || !this.fishingLine || !this.fishingRod) return
-    this.fishingClock += dt
-    this.fishingCastT = Math.min(1, this.fishingCastT + dt / 0.55)
-
-    const target = toWorldXZ(this.fishingBobberPx.x, this.fishingBobberPx.y)
-    const root = this.player.root.position
-    // Cast from the water-facing side of the body (not character facing) so the
-    // line is visible from any approach angle around the pond.
-    const toX = target.x - root.x
-    const toZ = target.z - root.z
-    const toLen = Math.hypot(toX, toZ) || 1
-    const nx = toX / toLen
-    const nz = toZ / toLen
-
-    const hand = this.fishHand
-    hand.set(root.x + nx * 0.38, root.y + 0.95, root.z + nz * 0.38)
-
-    const waterY = 0.06
-    const cast = this.fishingCastT
-    const ease = 1 - Math.pow(1 - cast, 2.4)
-
-    // Arc from hand → splash landing
-    const midX = hand.x + (target.x - hand.x) * ease
-    const midZ = hand.z + (target.z - hand.z) * ease
-    const arc = Math.sin(ease * Math.PI) * 1.35
-    let bobY = hand.y + (waterY - hand.y) * ease + arc
-
-    const landed = cast >= 1
-    if (landed) {
-      // Idle bob + occasional hard nibble so the wait reads clearly
-      if (this.fishingClock > this.fishingNibbleUntil) {
-        if (Math.random() < 0.012) this.fishingNibbleUntil = this.fishingClock + 0.55
-      }
-      const nibbling = this.fishingClock < this.fishingNibbleUntil
-      if (nibbling) {
-        const t = 1 - (this.fishingNibbleUntil - this.fishingClock) / 0.55
-        bobY = waterY - 0.12 - Math.sin(t * Math.PI) * 0.22
-        this.fishingBobber.rotation.z = Math.sin(this.fishingClock * 28) * 0.55
-        this.fishingBobber.rotation.x = Math.cos(this.fishingClock * 22) * 0.35
-      } else {
-        bobY = waterY + Math.sin(this.fishingClock * 5.2) * 0.07
-        this.fishingBobber.rotation.z = Math.sin(this.fishingClock * 2.4) * 0.12
-        this.fishingBobber.rotation.x = Math.cos(this.fishingClock * 1.8) * 0.08
-      }
-    } else {
-      this.fishingBobber.rotation.set(0.4, 0, ease * 1.2)
+    if (this.localFishing?.active) {
+      updateFishingRig(this.localFishing, this.player.root.position, dt)
     }
-
-    this.fishBob.set(midX, bobY, midZ)
-    this.fishingBobber.position.copy(this.fishBob)
-    this.fishingBobber.scale.setScalar(landed ? 1.15 : 0.85 + ease * 0.3)
-    this.fishingBobber.frustumCulled = false
-
-    // Hold rod upright toward the pond at ~60° from horizontal (never dunk tip in water).
-    // Mid-cast: briefly lift higher, then settle back to 60°.
-    const elevDeg = landed ? 60 : 60 + Math.sin(ease * Math.PI) * 25
-    const elev = (elevDeg * Math.PI) / 180
-    const cosE = Math.cos(elev)
-    const sinE = Math.sin(elev)
-    this.fishRodDir.set(nx * cosE, sinE, nz * cosE).normalize()
-    this.fishingRod.position.copy(hand)
-    this.fishingRod.quaternion.setFromUnitVectors(this.fishUp, this.fishRodDir)
-    // Local tip sits at y≈1.72 along the rod shaft — stays in the air
-    this.fishTip.set(0, 1.72, 0).applyQuaternion(this.fishingRod.quaternion).add(hand)
-
-    // Line sag from elevated tip down to bobber on the water
-    this.fishMid.set(
-      (this.fishTip.x + this.fishBob.x) * 0.5,
-      Math.min(this.fishTip.y, this.fishBob.y) - 0.35 - (1 - ease) * 0.15,
-      (this.fishTip.z + this.fishBob.z) * 0.5,
-    )
-    const positions = this.fishingLine.geometry.attributes.position as THREE.BufferAttribute
-    positions.setXYZ(0, this.fishTip.x, this.fishTip.y, this.fishTip.z)
-    positions.setXYZ(1, this.fishMid.x, this.fishMid.y, this.fishMid.z)
-    positions.setXYZ(2, this.fishBob.x, this.fishBob.y + 0.04, this.fishBob.z)
-    positions.needsUpdate = true
-    this.fishingLine.geometry.computeBoundingSphere()
-
-    // Splash ripples after landing
-    if (landed) {
-      for (let i = 0; i < this.fishingRipples.length; i++) {
-        const ring = this.fishingRipples[i]!
-        const phase = (this.fishingClock * 0.85 + i * 0.45) % 1.35
-        const u = phase / 1.35
-        ring.visible = true
-        ring.position.set(target.x, waterY + 0.02, target.z)
-        const s = 0.55 + u * 2.8
-        ring.scale.set(s, s, s)
-        const mat = ring.material as THREE.MeshBasicMaterial
-        mat.opacity = (1 - u) * 0.55
-      }
+    for (const [id, rig] of this.peerFishing) {
+      if (!rig.active) continue
+      const avatar = this.peers.get(id)
+      if (!avatar) continue
+      updateFishingRig(rig, avatar.root.position, dt)
     }
   }
 
@@ -990,6 +905,7 @@ export class CampusScene {
           facing: p.facing,
           lastJumpAt: p.jumpAt ?? 0,
           lastFireAt: p.fireAt ?? 0,
+          lastBiteAt: p.biteAt ?? 0,
         }
         this.peerMotion.set(p.id, motion)
       }
@@ -1007,6 +923,32 @@ export class CampusScene {
         motion.lastFireAt = p.fireAt
         avatar.triggerFireBreath()
         this.applyFireCone(avatar, motion.x, motion.y, motion.facing)
+      }
+      if (p.biteAt && p.biteAt !== motion.lastBiteAt) {
+        motion.lastBiteAt = p.biteAt
+        avatar.triggerBite()
+        this.applyBiteFront(avatar, motion.x, motion.y, motion.facing)
+      }
+
+      // Peer fishing rod / line — show while casting, hide on catch / stop
+      const fishing = p.fishX != null && p.fishY != null
+      if (fishing) {
+        let rig = this.peerFishing.get(p.id)
+        if (!rig) {
+          rig = createFishingRig()
+          this.peerFishing.set(p.id, rig)
+          this.scene.add(rig.group)
+        }
+        const sameTarget =
+          rig.active &&
+          Math.abs(rig.bobberPx.x - p.fishX!) < 0.5 &&
+          Math.abs(rig.bobberPx.y - p.fishY!) < 0.5
+        if (!sameTarget) {
+          setFishingRigActive(rig, true, { x: p.fishX!, y: p.fishY! })
+        }
+      } else {
+        const rig = this.peerFishing.get(p.id)
+        if (rig?.active) setFishingRigActive(rig, false, null)
       }
 
       const dx = motion.tx - motion.x
@@ -1037,6 +979,12 @@ export class CampusScene {
         avatar.dispose()
         this.peers.delete(id)
         this.peerMotion.delete(id)
+        const rig = this.peerFishing.get(id)
+        if (rig) {
+          this.scene.remove(rig.group)
+          disposeFishingRig(rig)
+          this.peerFishing.delete(id)
+        }
       }
     }
   }
@@ -1162,32 +1110,207 @@ export class CampusScene {
     for (const a of this.peers.values()) a.dispose()
     this.roofs.clear()
     this.roomWalls.clear()
-    this.fishingLine?.geometry.dispose()
-    ;(this.fishingLine?.material as THREE.Material | undefined)?.dispose()
-    this.fishingBobber?.traverse((obj) => {
-      if (!(obj instanceof THREE.Mesh)) return
-      obj.geometry.dispose()
-      const m = obj.material
-      if (Array.isArray(m)) m.forEach((x) => x.dispose())
-      else m.dispose()
-    })
-    this.fishingRod?.traverse((obj) => {
-      if (!(obj instanceof THREE.Mesh)) return
-      obj.geometry.dispose()
-      const m = obj.material
-      if (Array.isArray(m)) m.forEach((x) => x.dispose())
-      else m.dispose()
-    })
-    for (const ring of this.fishingRipples) {
-      ring.geometry.dispose()
-      ;(ring.material as THREE.Material).dispose()
-    }
+    if (this.localFishing) disposeFishingRig(this.localFishing)
+    for (const rig of this.peerFishing.values()) disposeFishingRig(rig)
+    this.peerFishing.clear()
     this.waterMat?.dispose()
     this.renderer.dispose()
   }
 }
 
 export { TILE }
+
+function createFishingRig(): FishingRig {
+  const group = new THREE.Group()
+  group.visible = false
+  const rod = makeFishingRod()
+  group.add(rod)
+  const bobber = makeFishingBobber()
+  group.add(bobber)
+  const lineGeo = new THREE.BufferGeometry().setFromPoints([
+    new THREE.Vector3(),
+    new THREE.Vector3(),
+    new THREE.Vector3(),
+  ])
+  const line = new THREE.Line(
+    lineGeo,
+    new THREE.LineBasicMaterial({
+      color: 0xf1f5f9,
+      transparent: true,
+      opacity: 1,
+      depthTest: false,
+      depthWrite: false,
+    }),
+  )
+  line.renderOrder = 20
+  line.frustumCulled = false
+  group.add(line)
+  const ripples: THREE.Mesh[] = []
+  for (let i = 0; i < 3; i++) {
+    const ring = new THREE.Mesh(
+      new THREE.RingGeometry(0.12, 0.18, 32),
+      new THREE.MeshBasicMaterial({
+        color: 0xdbeafe,
+        transparent: true,
+        opacity: 0,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+        depthTest: false,
+      }),
+    )
+    ring.rotation.x = -Math.PI / 2
+    ring.visible = false
+    ring.renderOrder = 19
+    ring.frustumCulled = false
+    ripples.push(ring)
+    group.add(ring)
+  }
+  return {
+    group,
+    bobber,
+    rod,
+    line,
+    ripples,
+    active: false,
+    bobberPx: { x: 0, y: 0 },
+    clock: 0,
+    castT: 1,
+    nibbleUntil: 0,
+    hand: new THREE.Vector3(),
+    bob: new THREE.Vector3(),
+    mid: new THREE.Vector3(),
+    tip: new THREE.Vector3(),
+    rodDir: new THREE.Vector3(),
+    up: new THREE.Vector3(0, 1, 0),
+  }
+}
+
+function setFishingRigActive(
+  rig: FishingRig,
+  active: boolean,
+  targetPx: { x: number; y: number } | null,
+) {
+  rig.active = active && !!targetPx
+  rig.group.visible = rig.active
+  if (targetPx) {
+    rig.bobberPx = { x: targetPx.x, y: targetPx.y }
+    rig.clock = 0
+    rig.castT = 0
+    rig.nibbleUntil = 0
+    for (const ring of rig.ripples) {
+      ring.visible = false
+      ;(ring.material as THREE.MeshBasicMaterial).opacity = 0
+    }
+  }
+}
+
+function updateFishingRig(rig: FishingRig, root: THREE.Vector3, dt: number) {
+  if (!rig.active) return
+  rig.clock += dt
+  rig.castT = Math.min(1, rig.castT + dt / 0.55)
+
+  const target = toWorldXZ(rig.bobberPx.x, rig.bobberPx.y)
+  const toX = target.x - root.x
+  const toZ = target.z - root.z
+  const toLen = Math.hypot(toX, toZ) || 1
+  const nx = toX / toLen
+  const nz = toZ / toLen
+
+  const hand = rig.hand
+  hand.set(root.x + nx * 0.38, root.y + 0.95, root.z + nz * 0.38)
+
+  const waterY = 0.06
+  const cast = rig.castT
+  const ease = 1 - Math.pow(1 - cast, 2.4)
+
+  const midX = hand.x + (target.x - hand.x) * ease
+  const midZ = hand.z + (target.z - hand.z) * ease
+  const arc = Math.sin(ease * Math.PI) * 1.35
+  let bobY = hand.y + (waterY - hand.y) * ease + arc
+
+  const landed = cast >= 1
+  if (landed) {
+    if (rig.clock > rig.nibbleUntil) {
+      if (Math.random() < 0.012) rig.nibbleUntil = rig.clock + 0.55
+    }
+    const nibbling = rig.clock < rig.nibbleUntil
+    if (nibbling) {
+      const t = 1 - (rig.nibbleUntil - rig.clock) / 0.55
+      bobY = waterY - 0.12 - Math.sin(t * Math.PI) * 0.22
+      rig.bobber.rotation.z = Math.sin(rig.clock * 28) * 0.55
+      rig.bobber.rotation.x = Math.cos(rig.clock * 22) * 0.35
+    } else {
+      bobY = waterY + Math.sin(rig.clock * 5.2) * 0.07
+      rig.bobber.rotation.z = Math.sin(rig.clock * 2.4) * 0.12
+      rig.bobber.rotation.x = Math.cos(rig.clock * 1.8) * 0.08
+    }
+  } else {
+    rig.bobber.rotation.set(0.4, 0, ease * 1.2)
+  }
+
+  rig.bob.set(midX, bobY, midZ)
+  rig.bobber.position.copy(rig.bob)
+  rig.bobber.scale.setScalar(landed ? 1.15 : 0.85 + ease * 0.3)
+  rig.bobber.frustumCulled = false
+
+  const elevDeg = landed ? 60 : 60 + Math.sin(ease * Math.PI) * 25
+  const elev = (elevDeg * Math.PI) / 180
+  const cosE = Math.cos(elev)
+  const sinE = Math.sin(elev)
+  rig.rodDir.set(nx * cosE, sinE, nz * cosE).normalize()
+  rig.rod.position.copy(hand)
+  rig.rod.quaternion.setFromUnitVectors(rig.up, rig.rodDir)
+  rig.tip.set(0, 1.72, 0).applyQuaternion(rig.rod.quaternion).add(hand)
+
+  rig.mid.set(
+    (rig.tip.x + rig.bob.x) * 0.5,
+    Math.min(rig.tip.y, rig.bob.y) - 0.35 - (1 - ease) * 0.15,
+    (rig.tip.z + rig.bob.z) * 0.5,
+  )
+  const positions = rig.line.geometry.attributes.position as THREE.BufferAttribute
+  positions.setXYZ(0, rig.tip.x, rig.tip.y, rig.tip.z)
+  positions.setXYZ(1, rig.mid.x, rig.mid.y, rig.mid.z)
+  positions.setXYZ(2, rig.bob.x, rig.bob.y + 0.04, rig.bob.z)
+  positions.needsUpdate = true
+  rig.line.geometry.computeBoundingSphere()
+
+  if (landed) {
+    for (let i = 0; i < rig.ripples.length; i++) {
+      const ring = rig.ripples[i]!
+      const phase = (rig.clock * 0.85 + i * 0.45) % 1.35
+      const u = phase / 1.35
+      ring.visible = true
+      ring.position.set(target.x, waterY + 0.02, target.z)
+      const s = 0.55 + u * 2.8
+      ring.scale.set(s, s, s)
+      const mat = ring.material as THREE.MeshBasicMaterial
+      mat.opacity = (1 - u) * 0.55
+    }
+  }
+}
+
+function disposeFishingRig(rig: FishingRig) {
+  rig.line.geometry.dispose()
+  ;(rig.line.material as THREE.Material).dispose()
+  rig.bobber.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh)) return
+    obj.geometry.dispose()
+    const m = obj.material
+    if (Array.isArray(m)) m.forEach((x) => x.dispose())
+    else m.dispose()
+  })
+  rig.rod.traverse((obj) => {
+    if (!(obj instanceof THREE.Mesh)) return
+    obj.geometry.dispose()
+    const m = obj.material
+    if (Array.isArray(m)) m.forEach((x) => x.dispose())
+    else m.dispose()
+  })
+  for (const ring of rig.ripples) {
+    ring.geometry.dispose()
+    ;(ring.material as THREE.Material).dispose()
+  }
+}
 
 /** Bright cork bobber with red tip — reads clearly on blue water. */
 function makeFishingBobber() {

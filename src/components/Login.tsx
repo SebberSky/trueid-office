@@ -15,17 +15,17 @@ export function Login() {
 
   return (
     <div className="login">
-      <div className="login__atmosphere" aria-hidden />
-      <div className="login__grid" aria-hidden />
+      <div className="login__sky" aria-hidden />
+      <div className="login__voxel-grid" aria-hidden />
 
       <main className="login__hero">
-        <p className="login__eyebrow">True Digital · Muze</p>
+        <img className="login__logo" src="/favicon.svg" alt="" width={72} height={72} />
         <h1 className="login__brand">
           TrueID
           <span>Office</span>
         </h1>
         <p className="login__tagline">
-          Virtual workspace สำหรับทีม — สร้างตัวละคร เดินบนแมพ และคุยในห้องจำกัดพื้นที่
+          เข้าออฟฟิศเสมือนจริง — สร้างตัวละครบล็อกๆ เดินบนแมพ และคุยในห้อง
         </p>
 
         <form className="login__form" onSubmit={onSubmit}>
@@ -48,16 +48,45 @@ export function Login() {
       </main>
 
       <aside className="login__visual" aria-hidden>
-        <div className="login__map-preview">
-          <div className="tile grass" />
-          <div className="tile path" />
-          <div className="tile water" />
-          <div className="tile floor" />
-          <div className="tile rock" />
-          <div className="tile plant" />
-          <div className="avatar a1" />
-          <div className="avatar a2" />
-          <div className="room-glow" />
+        <div className="login__campus">
+          <div className="login__campus-sky" />
+          <div className="login__tiles">
+            <span className="vt grass" />
+            <span className="vt grass" />
+            <span className="vt path" />
+            <span className="vt grass" />
+            <span className="vt water" />
+            <span className="vt water" />
+            <span className="vt path" />
+            <span className="vt floor" />
+            <span className="vt floor" />
+            <span className="vt rock" />
+            <span className="vt plant" />
+            <span className="vt grass" />
+            <span className="vt path" />
+            <span className="vt floor" />
+            <span className="vt plaza" />
+            <span className="vt plant" />
+          </div>
+          <div className="login__block-avatar a1">
+            <i className="head" />
+            <i className="body" />
+            <i className="leg l" />
+            <i className="leg r" />
+          </div>
+          <div className="login__block-avatar a2">
+            <i className="head" />
+            <i className="body teal" />
+            <i className="leg l" />
+            <i className="leg r" />
+          </div>
+          <div className="login__building">
+            <span className="roof" />
+            <span className="wall" />
+            <span className="win w1" />
+            <span className="win w2" />
+            <span className="door" />
+          </div>
         </div>
       </aside>
     </div>

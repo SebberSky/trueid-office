@@ -19,6 +19,7 @@ type Gait =
   | 'worm'
   | 'slither'
   | 'dragon'
+  | 'godzilla'
   | 'yoda'
 
 function gaitFor(kind: AnimalKind): Gait {
@@ -37,6 +38,8 @@ function gaitFor(kind: AnimalKind): Gait {
       return 'slither'
     case 'dragon':
       return 'dragon'
+    case 'godzilla':
+      return 'godzilla'
     case 'yoda':
       return 'yoda'
   }
@@ -73,6 +76,9 @@ export class Character3D {
   private crouchAmt = 0
   private fireT = 0
   private fireGroup: THREE.Group | null = null
+  private biteT = 0
+  private jaw: THREE.Object3D | null = null
+  private headRestZ = 0
   /** Charred look: hold black, then fade back to original colors. */
   private burnHoldT = 0
   private burnFadeT = 0
@@ -80,6 +86,13 @@ export class Character3D {
   private burnParts: { mat: THREE.MeshLambertMaterial; orig: THREE.Color }[] = []
   private static readonly BURN_HOLD = 5
   private static readonly BURN_COLOR = new THREE.Color(0x0c0c0c)
+  /** Blood stains (partial body) — hold red blotches, then fade out. */
+  private bloodHoldT = 0
+  private bloodFadeT = 0
+  private bloodFadeDur = 0.9
+  private bloodParts: { mat: THREE.MeshLambertMaterial; orig: THREE.Color }[] = []
+  private static readonly BLOOD_HOLD = 5
+  private static readonly BLOOD_COLOR = new THREE.Color(0xb91c1c)
 
   constructor(look: CharacterLook) {
     this.root.add(this.body)
@@ -100,7 +113,7 @@ export class Character3D {
     this.root.add(this.label)
 
     this.baseScale =
-      this.animalKind === 'dragon'
+      this.animalKind === 'dragon' || this.animalKind === 'godzilla'
         ? 0.88
         : this.animalKind === 'snake'
           ? 0.68
@@ -243,6 +256,10 @@ export class Character3D {
     }
     if (kind === 'dragon') {
       this.buildDragon(fur)
+      return
+    }
+    if (kind === 'godzilla') {
+      this.buildGodzilla(fur)
       return
     }
     if (kind === 'yoda') {
@@ -419,7 +436,65 @@ export class Character3D {
     this.body.add(tip)
   }
 
+  /** Bipedal kaiju — dragon-sized, upright on two legs. */
+  private buildGodzilla(fur: string) {
+    const accent = shade(fur, 35)
+    const belly = shade(fur, 25)
 
+    const torso = voxel(0.95, 1.15, 0.7, fur)
+    torso.position.set(0, 1.15, 0)
+    this.body.add(torso)
+    const chest = voxel(0.7, 0.45, 0.35, belly)
+    chest.position.set(0, 1.25, 0.28)
+    this.body.add(chest)
+
+    // Dorsal plates
+    for (let i = 0; i < 5; i++) {
+      const plate = voxel(0.08, 0.38 + (i % 2) * 0.12, 0.22, accent)
+      plate.position.set(0, 1.75, 0.35 - i * 0.22)
+      this.body.add(plate)
+    }
+
+    const legH = 0.85
+    const legW = 0.28
+    this.leftLeg = voxel(legW, legH, 0.32, shade(fur, -20))
+    this.rightLeg = voxel(legW, legH, 0.32, shade(fur, -20))
+    this.leftLeg.position.set(-0.28, legH / 2, 0.02)
+    this.rightLeg.position.set(0.28, legH / 2, 0.02)
+    this.body.add(this.leftLeg, this.rightLeg)
+
+    // Feet
+    this.body.add(pos(voxel(0.34, 0.12, 0.42, shade(fur, -30)), -0.28, 0.06, 0.08))
+    this.body.add(pos(voxel(0.34, 0.12, 0.42, shade(fur, -30)), 0.28, 0.06, 0.08))
+
+    this.leftArm = voxel(0.22, 0.7, 0.22, shade(fur, -15))
+    this.rightArm = voxel(0.22, 0.7, 0.22, shade(fur, -15))
+    this.leftArm.position.set(-0.62, 1.15, 0.05)
+    this.rightArm.position.set(0.62, 1.15, 0.05)
+    this.body.add(this.leftArm, this.rightArm)
+
+    // Claws
+    for (const s of [-1, 1]) {
+      const claw = voxel(0.12, 0.1, 0.22, accent)
+      claw.position.set(s * 0.62, 0.72, 0.18)
+      this.body.add(claw)
+    }
+
+    this.headG.position.set(0, 1.95, 0.2)
+    this.headRestZ = 0.2
+    this.body.add(this.headG)
+    addGodzillaHead(this.headG, fur, accent)
+    this.jaw = this.headG.getObjectByName('godzillaJaw') ?? null
+
+    const tail = voxel(0.32, 0.32, 1.35, fur)
+    tail.position.set(0, 0.85, -0.95)
+    tail.rotation.x = 0.25
+    this.body.add(tail)
+    const tip = voxel(0.2, 0.2, 0.4, accent)
+    tip.position.set(0, 0.55, -1.7)
+    this.body.add(tip)
+    this.restY = 0
+  }
 
   private buildYoda(fur: string) {
     const green = fur || '#6fbf4a'
@@ -517,6 +592,13 @@ export class Character3D {
     this.fireGroup.visible = true
   }
 
+  /** Godzilla bite — head lunge + jaw snap. */
+  triggerBite() {
+    if (this.animalKind !== 'godzilla') return
+    if (this.biteT > 0.05) return
+    this.biteT = 0.5
+  }
+
   /** Char this avatar black for ~5s, then fade back to chosen colors. */
   applyBurn(holdSec = Character3D.BURN_HOLD, fadeSec = 0.9) {
     this.ensureBurnParts()
@@ -528,8 +610,31 @@ export class Character3D {
     }
   }
 
+  /** Partial red blood stains on the body — hold ~5s, then fade (like burn). */
+  applyBloodStain(holdSec = Character3D.BLOOD_HOLD, fadeSec = 0.9) {
+    this.ensureBurnParts()
+    // Stain only a subset so it reads as splatters, not a full-body recolor
+    const pool = [...this.burnParts]
+    for (let i = pool.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[pool[i], pool[j]] = [pool[j]!, pool[i]!]
+    }
+    const n = Math.max(2, Math.min(pool.length, Math.ceil(pool.length * 0.35)))
+    this.bloodParts = pool.slice(0, n).map((p) => ({ mat: p.mat, orig: p.orig.clone() }))
+    this.bloodHoldT = holdSec
+    this.bloodFadeT = 0
+    this.bloodFadeDur = fadeSec
+    for (const p of this.bloodParts) {
+      p.mat.color.copy(p.orig).lerp(Character3D.BLOOD_COLOR, 0.82)
+    }
+  }
+
   isBreathingFire() {
     return this.fireT > 0
+  }
+
+  isBiting() {
+    return this.biteT > 0
   }
 
   airHeight() {
@@ -555,7 +660,9 @@ export class Character3D {
   ) {
     this.stepJump(dt)
     this.stepFire(dt)
+    this.stepBite(dt)
     this.stepBurn(dt)
+    this.stepBlood(dt)
     this.stepCrouch(dt, crouching)
     this.root.position.set(px, py + this.jumpY, pz)
     const yaw =
@@ -616,6 +723,25 @@ export class Character3D {
     }
   }
 
+  private stepBite(dt: number) {
+    if (this.animalKind !== 'godzilla') return
+    if (this.biteT <= 0) {
+      this.headG.position.z += (this.headRestZ - this.headG.position.z) * 0.25
+      if (this.jaw) this.jaw.rotation.x *= 0.75
+      return
+    }
+    this.biteT -= dt
+    const t = 1 - Math.max(0, this.biteT) / 0.5
+    // Snap forward then settle — peak lunge mid-bite
+    const lunge = Math.sin(Math.min(1, t) * Math.PI) * 0.55
+    this.headG.position.z = this.headRestZ + lunge
+    if (this.jaw) {
+      const open = t < 0.35 ? t / 0.35 : Math.max(0, 1 - (t - 0.35) / 0.65)
+      this.jaw.rotation.x = open * 0.75
+    }
+    if (this.biteT <= 0) this.biteT = 0
+  }
+
   private ensureBurnParts() {
     if (this.burnParts.length > 0) return
     const seen = new Set<THREE.MeshLambertMaterial>()
@@ -645,6 +771,28 @@ export class Character3D {
     if (this.burnFadeT <= 0) {
       this.burnFadeT = 0
       for (const p of this.burnParts) p.mat.color.copy(p.orig)
+    }
+  }
+
+  private stepBlood(dt: number) {
+    if (this.bloodHoldT <= 0 && this.bloodFadeT <= 0) return
+    if (this.bloodHoldT > 0) {
+      this.bloodHoldT -= dt
+      if (this.bloodHoldT > 0) return
+      this.bloodHoldT = 0
+      this.bloodFadeT = this.bloodFadeDur
+    }
+    if (this.bloodFadeT <= 0) return
+    this.bloodFadeT -= dt
+    const t = 1 - Math.max(0, this.bloodFadeT) / this.bloodFadeDur
+    for (const p of this.bloodParts) {
+      const stained = p.orig.clone().lerp(Character3D.BLOOD_COLOR, 0.82)
+      p.mat.color.copy(stained).lerp(p.orig, t)
+    }
+    if (this.bloodFadeT <= 0) {
+      this.bloodFadeT = 0
+      for (const p of this.bloodParts) p.mat.color.copy(p.orig)
+      this.bloodParts = []
     }
   }
 
@@ -756,6 +904,18 @@ export class Character3D {
           this.wingL.rotation.z = 0.3 + flap
           this.wingR.rotation.z = -0.3 - flap
         }
+        break
+      }
+      case 'godzilla': {
+        // Heavy bipedal stomp
+        this.walkPhase += dt * 6
+        const s = Math.sin(this.walkPhase) * 0.55
+        this.leftLeg.rotation.x = s
+        this.rightLeg.rotation.x = -s
+        this.leftArm.rotation.x = -s * 0.45
+        this.rightArm.rotation.x = s * 0.45
+        this.body.position.y = this.restY + Math.abs(Math.sin(this.walkPhase)) * 0.08
+        this.body.rotation.z = s * 0.04
         break
       }
       case 'yoda': {
@@ -964,6 +1124,36 @@ function addDragonHead(head: THREE.Group, fur: string, accent: string) {
   }
 }
 
+function addGodzillaHead(head: THREE.Group, fur: string, accent: string) {
+  head.add(voxel(0.62, 0.52, 0.58, fur))
+  // Brow ridges
+  for (const s of [-1, 1]) {
+    head.add(pos(voxel(0.16, 0.12, 0.2, shade(fur, -25)), s * 0.22, 0.22, 0.18))
+  }
+  // Snout
+  head.add(pos(voxel(0.4, 0.28, 0.42, shade(fur, -15)), 0, -0.02, 0.42))
+  // Eyes
+  for (const s of [-1, 1]) {
+    head.add(pos(voxel(0.12, 0.1, 0.05, '#f5e050'), s * 0.18, 0.1, 0.28))
+    head.add(pos(voxel(0.05, 0.08, 0.04, '#1a1a1a'), s * 0.18, 0.1, 0.3))
+  }
+  // Lower jaw (animated on bite)
+  const jaw = voxel(0.38, 0.16, 0.36, shade(fur, -30))
+  jaw.name = 'godzillaJaw'
+  jaw.position.set(0, -0.22, 0.38)
+  head.add(jaw)
+  // Teeth
+  for (const s of [-1, 0, 1]) {
+    jaw.add(pos(voxel(0.05, 0.1, 0.05, '#f8fafc'), s * 0.1, 0.1, 0.14))
+  }
+  // Head crest
+  for (let i = 0; i < 3; i++) {
+    const spike = voxel(0.08, 0.28, 0.1, accent)
+    spike.position.set(0, 0.38, 0.1 - i * 0.14)
+    head.add(spike)
+  }
+}
+
 function pos(mesh: THREE.Mesh, x: number, y: number, z: number) {
   mesh.position.set(x, y, z)
   return mesh
@@ -1005,25 +1195,25 @@ function addHairBlocks(head: THREE.Group, look: CharacterLook) {
 
 function makeNameSprite(name: string, voiceOn = false) {
   const canvas = document.createElement('canvas')
-  canvas.width = 320
-  canvas.height = 72
+  canvas.width = 384
+  canvas.height = 96
   const ctx = canvas.getContext('2d')!
-  ctx.clearRect(0, 0, 320, 72)
+  ctx.clearRect(0, 0, 384, 96)
 
   const display = name.slice(0, 10)
-  ctx.font = '700 28px Karla, sans-serif'
+  ctx.font = '700 40px Karla, sans-serif'
   const mic = voiceOn ? '🎤 ' : ''
   const label = `${mic}${display}`
   const textW = Math.ceil(ctx.measureText(label).width)
-  const padX = 16
-  const boxW = Math.min(300, Math.max(120, textW + padX * 2))
-  const boxH = 36
-  const boxX = (320 - boxW) / 2
-  const boxY = (72 - boxH) / 2
+  const padX = 18
+  const boxW = Math.min(360, Math.max(140, textW + padX * 2))
+  const boxH = 48
+  const boxX = (384 - boxW) / 2
+  const boxY = (96 - boxH) / 2
 
   ctx.fillStyle = voiceOn ? 'rgba(15, 80, 70, 0.88)' : 'rgba(15,23,42,0.8)'
   ctx.beginPath()
-  const r = 10
+  const r = 12
   ctx.moveTo(boxX + r, boxY)
   ctx.arcTo(boxX + boxW, boxY, boxX + boxW, boxY + boxH, r)
   ctx.arcTo(boxX + boxW, boxY + boxH, boxX, boxY + boxH, r)
@@ -1038,20 +1228,20 @@ function makeNameSprite(name: string, voiceOn = false) {
   ctx.fillStyle = '#fff'
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
-  ctx.fillText(label, 160, 37)
+  ctx.fillText(label, 192, 49)
 
   const tex = new THREE.CanvasTexture(canvas)
   tex.magFilter = THREE.LinearFilter
   tex.minFilter = THREE.LinearFilter
   const sprMat = new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false })
   const sprite = new THREE.Sprite(sprMat)
-  sprite.scale.set(voiceOn ? 1.85 : 1.65, 0.42, 1)
+  sprite.scale.set(voiceOn ? 2.35 : 2.1, 0.55, 1)
   return sprite
 }
 
 function labelYFor(kind: AnimalKind | null, gait: Gait) {
   if (gait === 'human') return 2.4
-  if (kind === 'dragon') return 2.35
+  if (kind === 'dragon' || kind === 'godzilla') return 2.35
   if (kind === 'yoda') return 1.45
   return 1.85
 }
