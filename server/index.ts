@@ -156,8 +156,22 @@ function readBody(req: http.IncomingMessage): Promise<string> {
 
 function cors(res: http.ServerResponse) {
   res.setHeader('Access-Control-Allow-Origin', '*')
-  res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,OPTIONS')
+  res.setHeader('Access-Control-Allow-Methods', 'GET,PUT,POST,OPTIONS')
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type')
+}
+
+function isLoopback(req: http.IncomingMessage) {
+  const ra = req.socket.remoteAddress ?? ''
+  return ra === '127.0.0.1' || ra === '::1' || ra === '::ffff:127.0.0.1'
+}
+
+/** Warn every connected browser before a host restart. */
+function notifyServerUpdating(inSec: number) {
+  const sec = Math.max(1, Math.min(120, Math.round(inSec)))
+  const msg: ServerMsg = { type: 'server-updating', inSec: sec, at: Date.now() }
+  broadcast(msg)
+  console.log(`[deploy] server-updating broadcast inSec=${sec} clients=${clients.size}`)
+  return { ok: true as const, inSec: sec, clients: clients.size }
 }
 
 const server = http.createServer(async (req, res) => {
@@ -181,6 +195,31 @@ const server = http.createServer(async (req, res) => {
         xo: xoDebugState({ clients, send, broadcast }),
       }),
     )
+    return
+  }
+
+  // Local-only — Jenkins / pm2 host calls this before restart.
+  if (req.method === 'POST' && url.pathname === '/api/server-updating') {
+    if (!isLoopback(req)) {
+      res.writeHead(403, { 'Content-Type': 'application/json' })
+      res.end(JSON.stringify({ error: 'localhost only' }))
+      return
+    }
+    let inSec = 10
+    try {
+      const raw = await readBody(req)
+      if (raw.trim()) {
+        const body = JSON.parse(raw) as { inSec?: unknown }
+        if (typeof body.inSec === 'number' && Number.isFinite(body.inSec)) {
+          inSec = body.inSec
+        }
+      }
+    } catch {
+      /* default 10s */
+    }
+    const result = notifyServerUpdating(inSec)
+    res.writeHead(200, { 'Content-Type': 'application/json' })
+    res.end(JSON.stringify(result))
     return
   }
 

@@ -2,7 +2,7 @@ import { nanoid } from 'nanoid'
 import type { PresenceBus, SignalData } from '../presence/bus'
 import type { ChatMessage } from '../chat/types'
 import { CHAT_MAX } from '../chat/types'
-import { playChatIncoming } from './sfx'
+import { playChatPublicIncoming } from './sfx'
 
 const ICE: RTCConfiguration = {
   iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
@@ -506,7 +506,7 @@ export class RoomMedia {
 
   private pushRoomChat(msg: ChatMessage) {
     if (this.roomMessages.some((m) => m.id === msg.id)) return
-    if (msg.fromId !== this.selfId) playChatIncoming()
+    if (msg.fromId !== this.selfId) playChatPublicIncoming()
     this.roomMessages = [...this.roomMessages, msg].slice(-CHAT_MAX)
     this.onRoomChat(this.roomMessages)
   }

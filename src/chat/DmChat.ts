@@ -3,7 +3,7 @@ import type { DmMessage } from './types'
 import { loadDmThread, saveDmThread } from './dmCookie'
 import type { OfficeSocket } from '../net/OfficeSocket'
 import type { ServerMsg } from '../../shared/protocol'
-import { playChatIncoming } from '../media/sfx'
+import { playChatDmIncoming } from '../media/sfx'
 
 type ThreadState = {
   peerId: string
@@ -121,7 +121,7 @@ export class DmChatBus {
     if (m.fromId === this.selfId) return
     if (m.toId !== this.selfId) return
 
-    playChatIncoming()
+    playChatDmIncoming()
 
     const peerId = m.fromId
     const peerName = m.fromName || 'ผู้เล่น'

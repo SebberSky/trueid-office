@@ -9,6 +9,8 @@ export type RosterPerson = {
   voiceOn?: boolean
   sharing?: boolean
   isSelf?: boolean
+  /** Live mic loudness 0..1 while speaking. */
+  speakingLevel?: number
   /** Unread DM count from this person. */
   dmUnread?: number
 }
@@ -81,7 +83,20 @@ export function OnlineRoster({
                   </div>
                   <div className="roster__meta">
                     {p.roomLabel ? <span className="roster__room">{p.roomLabel}</span> : null}
-                    {p.voiceOn ? <span title="ไมค์เปิด">🎙</span> : null}
+                    {(p.speakingLevel ?? 0) > 0.08 ? (
+                      <span
+                        className="roster__speaking"
+                        title="กำลังพูด"
+                        aria-label="กำลังพูด"
+                      >
+                        <i style={{ height: `${4 + (p.speakingLevel ?? 0) * 8}px` }} />
+                        <i style={{ height: `${4 + (p.speakingLevel ?? 0) * 12}px` }} />
+                        <i style={{ height: `${4 + (p.speakingLevel ?? 0) * 7}px` }} />
+                        <i style={{ height: `${4 + (p.speakingLevel ?? 0) * 10}px` }} />
+                      </span>
+                    ) : p.voiceOn ? (
+                      <span title="ไมค์เปิด">🎙</span>
+                    ) : null}
                     {p.sharing ? <span title="กำลังแชร์จอ">🖥</span> : null}
                   </div>
                 </div>

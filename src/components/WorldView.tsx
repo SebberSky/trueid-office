@@ -6,6 +6,11 @@ import { CampusScene } from '../world/CampusScene'
 import { HEARTBEAT_MS, MOVE_SEND_MS, PresenceBus, makePresence } from '../presence/bus'
 import { OfficeSocket } from '../net/OfficeSocket'
 import { RoomMedia } from '../media/RoomMedia'
+import { VoiceLevelMonitor } from '../media/VoiceLevelMonitor'
+import {
+  isPublicChatAlertMuted,
+  setPublicChatAlertMuted,
+} from '../media/sfx'
 import { downloadRecording, ScreenRecorder } from '../media/ScreenRecorder'
 import { GlobalChatBus } from '../chat/GlobalChat'
 import { FLOAT_EMOJIS, RoomActivityBus, type Poll } from '../chat/RoomActivity'
@@ -19,6 +24,7 @@ import { NameWheel } from './NameWheel'
 import { PollPanel } from './PollPanel'
 import { FloatingEmojis, type FloatEmojiItem } from './FloatingEmojis'
 import { OnlineRoster, type RosterPerson } from './OnlineRoster'
+import { ServerUpdateBanner } from './ServerUpdateBanner'
 import { FishingCatchOverlay } from './FishingCatch'
 import { FallGuysGame } from './FallGuysGame'
 import { XoGame } from './XoGame'
@@ -93,6 +99,12 @@ export function WorldView() {
   const peersRef = useRef<ReturnType<PresenceBus['getPeers']>>([])
   const busRef = useRef<PresenceBus | null>(null)
   const mediaRef = useRef<RoomMedia | null>(null)
+  const remoteStreamsRef = useRef(new Map<string, MediaStream>())
+  const voiceMonitorRef = useRef(new VoiceLevelMonitor())
+  const syncVoiceMonitorRef = useRef(() => {})
+  const speakingLevelsRef = useRef(new Map<string, number>())
+  const lastSpeakUiAtRef = useRef(0)
+  const speakUiPubRef = useRef<Record<string, number>>({})
   const recorderRef = useRef<ScreenRecorder | null>(null)
   const globalChatRef = useRef<GlobalChatBus | null>(null)
   const dmChatRef = useRef<DmChatBus | null>(null)
@@ -114,6 +126,7 @@ export function WorldView() {
   const [recording, setRecording] = useState(false)
   const [peerCount, setPeerCount] = useState(0)
   const [peersLive, setPeersLive] = useState<ReturnType<PresenceBus['getPeers']>>([])
+  const [speakingLevels, setSpeakingLevels] = useState<Record<string, number>>({})
   const [roster, setRoster] = useState<'server' | 'room' | null>(null)
   const onlineBtnRef = useRef<HTMLButtonElement>(null)
   const roomBtnRef = useRef<HTMLButtonElement>(null)
@@ -164,6 +177,10 @@ export function WorldView() {
   const [roomMsgs, setRoomMsgs] = useState<ChatMessage[]>([])
   /** When in a room, global chat starts collapsed to one preview line. */
   const [globalChatExpanded, setGlobalChatExpanded] = useState(true)
+  const [publicChatAlertMuted, setPublicChatAlertMutedState] = useState(() =>
+    isPublicChatAlertMuted(),
+  )
+  const [serverUpdate, setServerUpdate] = useState<{ inSec: number; at: number } | null>(null)
   const [dmThread, setDmThread] = useState<{
     peerId: string
     peerName: string
@@ -270,6 +287,17 @@ export function WorldView() {
 
   const publishRef = useRef(publish)
   publishRef.current = publish
+
+  syncVoiceMonitorRef.current = () => {
+    const media = mediaRef.current
+    const entries: { id: string; stream: MediaStream | null }[] = [
+      { id: session.id, stream: media?.getLocalStream() ?? null },
+    ]
+    for (const [id, stream] of remoteStreamsRef.current) {
+      entries.push({ id, stream })
+    }
+    voiceMonitorRef.current.sync(entries)
+  }
 
   const applyFgRaceStart = useCallback(
     (race: { raceId: number; startedAt: number; players: { id: string; name: string }[] }) => {
@@ -384,6 +412,13 @@ export function WorldView() {
         net.destroy()
         busRef.current = null
         logout('บัญชีนี้เข้าสู่ระบบจากอุปกรณ์อื่นแล้ว — อุปกรณ์นี้ถูกตัดการเชื่อมต่อ')
+        return
+      }
+      if (msg.type === 'server-updating') {
+        setServerUpdate({
+          inSec: Math.max(1, msg.inSec || 10),
+          at: msg.at || Date.now(),
+        })
         return
       }
       if (msg.type === 'error') {
@@ -553,6 +588,8 @@ export function WorldView() {
       bus,
       session.id,
       (streams) => {
+        remoteStreamsRef.current = streams
+        syncVoiceMonitorRef.current()
         const host = audioHostRef.current
         if (!host) return
         const seen = new Set<string>()
@@ -596,6 +633,7 @@ export function WorldView() {
     mediaRef.current = media
 
     const resumeAudio = () => {
+      voiceMonitorRef.current.resume()
       const host = audioHostRef.current
       if (!host) return
       for (const el of host.querySelectorAll('audio')) {
@@ -622,6 +660,8 @@ export function WorldView() {
       unsubDmUnread()
       unsubAct()
       void media.destroy()
+      voiceMonitorRef.current.destroy()
+      remoteStreamsRef.current = new Map()
       globalChat.destroy()
       dmChat.destroy()
       activity.destroy()
@@ -962,6 +1002,31 @@ export function WorldView() {
 
       const { peers } = maintainMedia(now)
       scene.syncPeers(peers, map, dt)
+      const levels = voiceMonitorRef.current.sample()
+      speakingLevelsRef.current = levels
+      scene.applySpeakingLevels(levels, session.id)
+      if (now - lastSpeakUiAtRef.current > 90) {
+        lastSpeakUiAtRef.current = now
+        const next: Record<string, number> = {}
+        for (const [id, lvl] of levels) {
+          const q = lvl < 0.08 ? 0 : Math.round(lvl * 20) / 20
+          if (q > 0) next[id] = q
+        }
+        const prev = speakUiPubRef.current
+        let changed = Object.keys(prev).length !== Object.keys(next).length
+        if (!changed) {
+          for (const id of Object.keys(next)) {
+            if (prev[id] !== next[id]) {
+              changed = true
+              break
+            }
+          }
+        }
+        if (changed) {
+          speakUiPubRef.current = next
+          setSpeakingLevels(next)
+        }
+      }
       scene.render(map, pos.current.x, pos.current.y, facing.current, moving, dt, crouching)
       raf = requestAnimationFrame(tick)
     }
@@ -986,6 +1051,7 @@ export function WorldView() {
     setMediaError(null)
     setVoiceOn(false)
     sceneRef.current?.setLocalMic(false)
+    syncVoiceMonitorRef.current()
     setHandRaised(false)
     setRaisedHands([])
     setActivePoll(null)
@@ -997,6 +1063,7 @@ export function WorldView() {
     void (async () => {
       await mediaRef.current?.setVoice(false)
       await mediaRef.current?.stopScreenShare()
+      syncVoiceMonitorRef.current()
       // Drop preview after local stop — do not keep showing remotes outside a room.
       setScreenFrom(null)
       setSharing(false)
@@ -1037,7 +1104,7 @@ export function WorldView() {
     }
     try {
       const blob = await rec.stop()
-      downloadRecording(blob)
+      if (blob.size > 0) downloadRecording(blob)
     } catch {
       /* ignore */
     }
@@ -1051,7 +1118,11 @@ export function WorldView() {
     try {
       if (recording && recorderRef.current?.recording) {
         const blob = await recorderRef.current.stop()
-        downloadRecording(blob)
+        if (blob.size <= 0) {
+          setMediaError('ไฟล์อัดว่าง — ลองอัดใหม่อีกครั้ง')
+        } else {
+          downloadRecording(blob)
+        }
         recorderRef.current = null
         setRecording(false)
         return
@@ -1080,6 +1151,7 @@ export function WorldView() {
       await mediaRef.current?.setVoice(next)
       setVoiceOn(next)
       sceneRef.current?.setLocalMic(next)
+      syncVoiceMonitorRef.current()
       if (recorderRef.current?.recording) {
         recorderRef.current.setAudioSources(mediaRef.current?.collectAudioStreams() ?? [])
       }
@@ -1215,6 +1287,7 @@ export function WorldView() {
       voiceOn,
       sharing,
       isSelf: true,
+      speakingLevel: speakingLevels[session.id] ?? 0,
     }
   }
 
@@ -1227,6 +1300,7 @@ export function WorldView() {
       voiceOn: p.voiceOn,
       sharing: p.sharing,
       dmUnread: dmChatRef.current?.getUnread(p.id) ?? 0,
+      speakingLevel: speakingLevels[p.id] ?? 0,
     })),
   ]
   void dmUnreadTick // re-render when unread changes
@@ -1242,6 +1316,7 @@ export function WorldView() {
             roomLabel: roomName,
             voiceOn: p.voiceOn,
             sharing: p.sharing,
+            speakingLevel: speakingLevels[p.id] ?? 0,
           })),
       ]
     : []
@@ -1343,6 +1418,9 @@ export function WorldView() {
 
   return (
     <div className="world">
+      {serverUpdate && (
+        <ServerUpdateBanner inSec={serverUpdate.inSec} at={serverUpdate.at} />
+      )}
       <header className="world__bar">
         <div className="world__brand">
           <img className="world__logo" src="/favicon.svg" alt="" width={28} height={28} />
@@ -1738,6 +1816,12 @@ export function WorldView() {
             onToggleCollapse={
               roomId ? () => setGlobalChatExpanded((v) => !v) : undefined
             }
+            alertMuted={publicChatAlertMuted}
+            onToggleAlertMute={() => {
+              const next = !publicChatAlertMuted
+              setPublicChatAlertMuted(next)
+              setPublicChatAlertMutedState(next)
+            }}
             onSend={(text) => globalChatRef.current?.send(session.look.displayName, text)}
           />
           {roomId && (
@@ -1747,6 +1831,12 @@ export function WorldView() {
                 messages={roomMsgs}
                 enabled
                 placeholder="Room chat…"
+                alertMuted={publicChatAlertMuted}
+                onToggleAlertMute={() => {
+                  const next = !publicChatAlertMuted
+                  setPublicChatAlertMuted(next)
+                  setPublicChatAlertMutedState(next)
+                }}
                 pinned={pinsByRoom.get(roomId) ?? null}
                 onPinMessage={(message) => {
                   // Ensure server has current roomId before pin auth check

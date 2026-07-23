@@ -63,6 +63,17 @@ cd "$APP_DIR"
 echo "==> npm ci"
 npm ci
 
+WARN_SEC="${TRUEID_UPDATE_WARN_SEC:-10}"
+echo "==> notifying online clients (client refresh wait ${WARN_SEC}s)…"
+if curl -sf -m 3 -X POST "http://127.0.0.1:3001/api/server-updating" \
+  -H 'Content-Type: application/json' \
+  -d "{\"inSec\":${WARN_SEC}}"; then
+  echo
+else
+  echo
+  echo "WARN: could not notify clients (server may be down) — continuing restart" >&2
+fi
+
 PM2=(npx --no-install pm2)
 
 echo "==> pm2 delete trueid-office (and legacy names) then start from $APP_DIR"

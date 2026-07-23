@@ -963,6 +963,14 @@ export class CampusScene {
     this.player.setNameplate(this.playerLabelName, voiceOn)
   }
 
+  /** Drive speaking badges from live mic RMS (peer id → 0..1). */
+  applySpeakingLevels(levels: Map<string, number>, selfId: string) {
+    this.player.setSpeakingLevel(levels.get(selfId) ?? 0)
+    for (const [id, avatar] of this.peers) {
+      avatar.setSpeakingLevel(levels.get(id) ?? 0)
+    }
+  }
+
   /**
    * Project a character head to canvas UV (0–1, origin top-left).
    * `who === 'local'` uses the local player; otherwise a peer id.
