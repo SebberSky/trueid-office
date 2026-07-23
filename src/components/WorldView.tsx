@@ -238,6 +238,7 @@ export function WorldView() {
   const fireAtRef = useRef(0)
   const spitAtRef = useRef(0)
   const biteAtRef = useRef(0)
+  const slapAtRef = useRef(0)
   const crouchingRef = useRef(false)
   const fishCastRef = useRef<{ x: number; y: number } | null>(null)
 
@@ -262,6 +263,7 @@ export function WorldView() {
         biteAtRef.current || undefined,
         fishCastRef.current,
         spitAtRef.current || undefined,
+        slapAtRef.current || undefined,
       ),
     )
   }, [map, session, voiceOn, sharing])
@@ -668,6 +670,12 @@ export function WorldView() {
       if (e.code === 'KeyE' && !e.repeat) {
         e.preventDefault()
         const look = lookRef.current
+        if (look.species === 'male' || look.species === 'female') {
+          sceneRef.current?.slapTray()
+          slapAtRef.current = Date.now()
+          publishRef.current()
+          return
+        }
         if (look.species !== 'animal') return
         const kind = normalizeAnimalKind(look.animalKind)
         if (kind === 'dragon') {
