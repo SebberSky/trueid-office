@@ -1,12 +1,23 @@
-/** Lightweight one-shot SFX helpers (HTMLAudioElement). */
+/** Lightweight one-shot SFX — each clip finishes before it can play again. */
+
+const active = new Map<string, HTMLAudioElement>()
 
 function play(src: string, volume = 0.75) {
+  if (active.has(src)) return
   try {
     const audio = new Audio(src)
     audio.volume = volume
-    void audio.play().catch(() => undefined)
+    const clear = () => {
+      if (active.get(src) === audio) active.delete(src)
+    }
+    audio.addEventListener('ended', clear)
+    audio.addEventListener('error', clear)
+    active.set(src, audio)
+    void audio.play().catch(() => {
+      clear()
+    })
   } catch {
-    /* autoplay / missing asset */
+    active.delete(src)
   }
 }
 
