@@ -73,6 +73,8 @@ export class Character3D {
   private restY = 0
   private labelBaseY = 2.4
   private baseScale = 0.55
+  /** World-space body width (torso × scale) — used for human slap hitbox. */
+  private bodyWidth = 0.45
   private crouchAmt = 0
   private fireT = 0
   private fireGroup: THREE.Group | null = null
@@ -81,6 +83,11 @@ export class Character3D {
   private biteT = 0
   private jaw: THREE.Object3D | null = null
   private headRestZ = 0
+  private slapT = 0
+  private tray: THREE.Mesh | null = null
+  private starT = 0
+  private starPhase = 0
+  private starGroup: THREE.Group | null = null
   /** Charred look: hold black, then fade back to original colors. */
   private burnHoldT = 0
   private burnFadeT = 0
@@ -131,6 +138,10 @@ export class Character3D {
             ? 0.48
             : 0.55
     this.root.scale.setScalar(this.baseScale)
+    if (this.gait === 'human') {
+      const female = look.species === 'female'
+      this.bodyWidth = (female ? 0.58 : 0.8) * this.baseScale
+    }
   }
 
   private buildHuman(look: CharacterLook) {
@@ -223,6 +234,17 @@ export class Character3D {
     handL.position.set(-armX, 0.7, 0)
     handR.position.set(armX, 0.7, 0)
     this.body.add(handL, handR)
+
+    // Gray square tray — held in the right hand during E slap
+    this.tray = new THREE.Mesh(
+      new THREE.BoxGeometry(0.42, 0.04, 0.42),
+      new THREE.MeshLambertMaterial({ color: 0x9ca3af }),
+    )
+    this.tray.position.set(0, -0.42, 0.22)
+    this.tray.rotation.x = 0.15
+    this.tray.visible = false
+    this.tray.castShadow = true
+    this.rightArm.add(this.tray)
 
     this.headG = new THREE.Group()
     this.headG.position.set(0, female ? 1.72 : 1.7, 0)
@@ -640,6 +662,37 @@ export class Character3D {
     this.biteT = 0.5
   }
 
+  /** Human tray slap — gray tray in hand swings at the front. */
+  triggerTraySlap() {
+    if (this.gait !== 'human') return
+    if (this.slapT > 0.05) return
+    this.slapT = 0.42
+    if (this.tray) this.tray.visible = true
+  }
+
+  /** Stars orbit the head for a few seconds (dazed from tray slap). */
+  applyStars(holdSec = 3) {
+    this.starT = holdSec
+    this.starPhase = 0
+    if (!this.starGroup) {
+      this.starGroup = new THREE.Group()
+      this.root.add(this.starGroup)
+      for (let i = 0; i < 5; i++) {
+        this.starGroup.add(makeStarMesh())
+      }
+    }
+    this.starGroup.visible = true
+    this.starGroup.position.y = this.labelBaseY + 0.15
+  }
+
+  getBodyWidth() {
+    return this.bodyWidth
+  }
+
+  isHuman() {
+    return this.gait === 'human'
+  }
+
   /** Char this avatar black for ~5s, then fade back to chosen colors. */
   applyBurn(holdSec = Character3D.BURN_HOLD, fadeSec = 0.9) {
     this.ensureBurnParts()
@@ -722,9 +775,11 @@ export class Character3D {
     this.stepFire(dt)
     this.stepSpit(dt)
     this.stepBite(dt)
+    this.stepSlap(dt)
     this.stepBurn(dt)
     this.stepBlood(dt)
     this.stepPoison(dt)
+    this.stepStars(dt)
     this.stepCrouch(dt, crouching)
     this.root.position.set(px, py + this.jumpY, pz)
     const yaw =
@@ -741,6 +796,8 @@ export class Character3D {
     } else {
       this.settle()
     }
+    // Re-apply slap arm pose after gait (walk/settle would overwrite it)
+    if (this.slapT > 0) this.applySlapArmPose()
     // Always derive label height from a stable base each frame.
     // (Old code multiplied crouch into label.y every tick, so it collapsed to the feet.)
     if (!(canHoverFly && overWater)) {
@@ -836,6 +893,63 @@ export class Character3D {
       this.jaw.rotation.x = open * 0.75
     }
     if (this.biteT <= 0) this.biteT = 0
+  }
+
+  private stepSlap(dt: number) {
+    if (this.gait !== 'human') return
+    if (this.slapT <= 0) {
+      if (this.tray) this.tray.visible = false
+      return
+    }
+    this.slapT -= dt
+    if (this.slapT <= 0) {
+      this.slapT = 0
+      this.rightArm.rotation.z = 0
+      if (this.tray) this.tray.visible = false
+      return
+    }
+    this.applySlapArmPose()
+  }
+
+  private applySlapArmPose() {
+    if (this.slapT <= 0 || this.gait !== 'human') return
+    const t = 1 - this.slapT / 0.42
+    let swing: number
+    if (t < 0.28) {
+      swing = -0.2 - (t / 0.28) * 0.55
+    } else {
+      const strike = (t - 0.28) / 0.72
+      swing = -0.75 - Math.sin(Math.min(1, strike) * Math.PI) * 1.35
+    }
+    this.rightArm.rotation.x = swing
+    this.rightArm.rotation.z = Math.sin(t * Math.PI) * -0.35
+    if (this.tray) {
+      this.tray.visible = true
+      this.tray.rotation.x = 0.2 + Math.sin(t * Math.PI) * 0.4
+    }
+  }
+
+  private stepStars(dt: number) {
+    if (!this.starGroup) return
+    if (this.starT <= 0) {
+      this.starGroup.visible = false
+      return
+    }
+    this.starT -= dt
+    this.starPhase += dt * 5.5
+    this.starGroup.visible = true
+    this.starGroup.position.y = this.labelBaseY + 0.2
+    const n = this.starGroup.children.length
+    this.starGroup.children.forEach((child, i) => {
+      const a = this.starPhase + (i / n) * Math.PI * 2
+      child.position.set(Math.cos(a) * 0.55, Math.sin(a * 2.2) * 0.12, Math.sin(a) * 0.55)
+      child.rotation.y = a
+      child.rotation.z = Math.sin(a * 3) * 0.4
+    })
+    if (this.starT <= 0) {
+      this.starT = 0
+      this.starGroup.visible = false
+    }
   }
 
   private ensureBurnParts() {
@@ -1101,6 +1215,15 @@ export class Character3D {
       }
     })
   }
+}
+
+function makeStarMesh() {
+  const mat = new THREE.MeshBasicMaterial({ color: 0xfbbf24 })
+  const g = new THREE.Group()
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.22, 0.08), mat))
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.22, 0.08, 0.08), mat))
+  g.add(new THREE.Mesh(new THREE.BoxGeometry(0.08, 0.08, 0.22), mat))
+  return g
 }
 
 function voxel(w: number, h: number, d: number, color: string) {

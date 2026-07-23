@@ -7,6 +7,7 @@ import type { CharacterLook, Facing, PeerPresence, RoomDef } from '../types'
 import { canFlyOverWater } from '../types'
 import { FALLGUYS_ROOM_ID } from '../fallguys/types'
 import { XO_ROOM_ID } from '../xo/types'
+import { playMetallicClang, playPoisonSpit, playGodzillaBite } from '../media/sfx'
 
 /** 1 = max zoom in (character). Min zoom stays mid-range — no full-map pullback. */
 const ZOOM_DEFAULT = 0.42
@@ -28,6 +29,7 @@ type PeerMotion = {
   lastFireAt: number
   lastSpitAt: number
   lastBiteAt: number
+  lastSlapAt: number
 }
 
 type FishingRig = {
@@ -762,6 +764,7 @@ export class CampusScene {
   /** Snake poison spit (E) — cyan streams ~3 tiles + poison anyone in the spray. */
   spitPoison() {
     this.player.triggerPoisonSpit()
+    playPoisonSpit()
     this.applyPoisonSpray(
       this.player,
       this.lastLocalPos.x,
@@ -773,12 +776,25 @@ export class CampusScene {
   /** Godzilla bite (E) — VFX + blood-stain anyone directly in front. */
   bite() {
     this.player.triggerBite()
+    playGodzillaBite()
     this.applyBiteFront(
       this.player,
       this.lastLocalPos.x,
       this.lastLocalPos.y,
       this.lastLocalPos.facing,
     )
+  }
+
+  /** Human tray slap (E) — swing gray tray; daze anyone in front. */
+  slapTray() {
+    this.player.triggerTraySlap()
+    const hit = this.applySlapFront(
+      this.player,
+      this.lastLocalPos.x,
+      this.lastLocalPos.y,
+      this.lastLocalPos.facing,
+    )
+    if (hit) playMetallicClang()
   }
 
   /** Char avatars standing in front of a dragon's breath. */
@@ -903,6 +919,45 @@ export class CampusScene {
     }
   }
 
+  /** Human tray slap — front hitbox as wide as the attacker body. */
+  private applySlapFront(
+    attacker: Character3D,
+    ox: number,
+    oy: number,
+    facing: Facing,
+  ): boolean {
+    const dir =
+      facing === 'down'
+        ? { x: 0, y: 1 }
+        : facing === 'up'
+          ? { x: 0, y: -1 }
+          : facing === 'left'
+            ? { x: -1, y: 0 }
+            : { x: 1, y: 0 }
+    const range = TILE * 1.25
+    const halfWidth = (attacker.getBodyWidth() / 2) * TILE
+    let hit = false
+
+    const tryHit = (avatar: Character3D, x: number, y: number) => {
+      if (avatar === attacker) return
+      const dx = x - ox
+      const dy = y - oy
+      const along = dx * dir.x + dy * dir.y
+      if (along < TILE * 0.15 || along > range) return
+      const lat = Math.abs(dx * dir.y - dy * dir.x)
+      if (lat > halfWidth) return
+      avatar.applyStars(3)
+      hit = true
+    }
+
+    tryHit(this.player, this.lastLocalPos.x, this.lastLocalPos.y)
+    for (const [id, motion] of this.peerMotion) {
+      const avatar = this.peers.get(id)
+      if (avatar) tryHit(avatar, motion.x, motion.y)
+    }
+    return hit
+  }
+
   setLocalMic(voiceOn: boolean) {
     this.player.setNameplate(this.playerLabelName, voiceOn)
   }
@@ -969,6 +1024,7 @@ export class CampusScene {
           lastFireAt: p.fireAt ?? 0,
           lastSpitAt: p.spitAt ?? 0,
           lastBiteAt: p.biteAt ?? 0,
+          lastSlapAt: p.slapAt ?? 0,
         }
         this.peerMotion.set(p.id, motion)
       }
@@ -990,12 +1046,21 @@ export class CampusScene {
       if (p.spitAt && p.spitAt !== motion.lastSpitAt) {
         motion.lastSpitAt = p.spitAt
         avatar.triggerPoisonSpit()
+        playPoisonSpit()
         this.applyPoisonSpray(avatar, motion.x, motion.y, motion.facing)
       }
       if (p.biteAt && p.biteAt !== motion.lastBiteAt) {
         motion.lastBiteAt = p.biteAt
         avatar.triggerBite()
+        playGodzillaBite()
         this.applyBiteFront(avatar, motion.x, motion.y, motion.facing)
+      }
+      if (p.slapAt && p.slapAt !== motion.lastSlapAt) {
+        motion.lastSlapAt = p.slapAt
+        avatar.triggerTraySlap()
+        if (this.applySlapFront(avatar, motion.x, motion.y, motion.facing)) {
+          playMetallicClang()
+        }
       }
 
       // Peer fishing rod / line — show while casting, hide on catch / stop

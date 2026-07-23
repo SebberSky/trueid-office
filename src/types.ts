@@ -125,6 +125,8 @@ export interface PeerPresence {
   spitAt?: number
   /** Timestamp of last Godzilla bite — remotes replay the VFX when this changes. */
   biteAt?: number
+  /** Timestamp of last human tray slap — remotes replay the VFX when this changes. */
+  slapAt?: number
   /** Holding crouch (Ctrl) — remotes mirror the squat pose. */
   crouching?: boolean
   /** Pond bobber target while fishing; omit when not casting. */
