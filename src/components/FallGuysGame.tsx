@@ -137,13 +137,13 @@ function mulberry32(a: number) {
   }
 }
 
-function knockBack(
-  state: { px: number; py: number; vy: number; onGround: boolean },
-  force = 110,
-) {
-  state.px -= force
-  state.vy = -220
-  state.onGround = false
+const START_X = 80
+
+function resetToStart(state: { px: number; py: number; vy: number; onGround: boolean }) {
+  state.px = START_X
+  state.py = 0
+  state.vy = 0
+  state.onGround = true
 }
 
 /** Simple Fall Guys-style side-scroller race for arena participants / spectators. */
@@ -239,13 +239,22 @@ export function FallGuysGame({
 
     const obstacles = buildCourse(raceId * 9973 + 42)
 
-    const player = { px: 80, py: 0, vy: 0, onGround: true }
+    const player = { px: START_X, py: 0, vy: 0, onGround: true }
     let finished = false
     let lastSend = 0
+    /** Brief grace after respawn so the same hit doesn't loop. */
+    let invulnUntil = 0
     let camX = 0
     let last = performance.now()
     let raf = 0
     const groundY = () => h * 0.72
+
+    const failAndRestart = (at: number) => {
+      resetToStart(player)
+      invulnUntil = at + 700
+      lastSend = 0
+      onProgressRef.current(0, false)
+    }
 
     const tick = (now: number) => {
       const dt = Math.min(0.05, (now - last) / 1000)
@@ -283,48 +292,56 @@ export function FallGuysGame({
 
         const beanX = player.px
         const beanY = gy - 28 + player.py
+        const canHit = now >= invulnUntil
+        let failed = false
 
-        for (const o of obstacles) {
-          if (o.kind === 'hammer') {
-            const tipX = o.x + Math.cos(o.ang) * o.len
-            const tipY = gy - 40 + Math.sin(o.ang) * o.len
-            if (Math.hypot(tipX - beanX, tipY - beanY) < 34) knockBack(player, 100)
-          } else if (o.kind === 'spinner') {
-            const tipX = o.x + Math.cos(o.ang) * o.len
-            const tipY = gy - 90 + Math.sin(o.ang) * o.len
-            if (Math.hypot(tipX - beanX, tipY - beanY) < 30) knockBack(player, 95)
-          } else if (o.kind === 'pusher') {
-            if (Math.abs(beanX - o.x) < 28 && beanY > gy - 100 && player.py > -95) {
-              player.px = o.x - 36
-              player.vy = -160
-              player.onGround = false
+        if (canHit) {
+          for (const o of obstacles) {
+            if (o.kind === 'hammer') {
+              const tipX = o.x + Math.cos(o.ang) * o.len
+              const tipY = gy - 40 + Math.sin(o.ang) * o.len
+              if (Math.hypot(tipX - beanX, tipY - beanY) < 34) failed = true
+            } else if (o.kind === 'spinner') {
+              const tipX = o.x + Math.cos(o.ang) * o.len
+              const tipY = gy - 90 + Math.sin(o.ang) * o.len
+              if (Math.hypot(tipX - beanX, tipY - beanY) < 30) failed = true
+            } else if (o.kind === 'pusher') {
+              if (Math.abs(beanX - o.x) < 28 && beanY > gy - 100 && player.py > -95) {
+                failed = true
+              }
+            } else if (o.kind === 'popper') {
+              const up = Math.max(0, Math.sin(o.t + o.phase))
+              const height = 20 + up * 78
+              if (Math.abs(beanX - o.x) < 22 && beanY > gy - height - 10 && player.py > -height) {
+                failed = true
+              }
+            } else if (o.kind === 'bumper') {
+              const bx = o.x + Math.sin(o.t) * o.amp
+              const by = gy + o.yOff + Math.cos(o.t * 0.7) * 18
+              if (Math.hypot(bx - beanX, by - beanY) < 38) failed = true
+            } else if (o.kind === 'gap') {
+              if (
+                player.onGround &&
+                beanX > o.x + 8 &&
+                beanX < o.x + o.w - 8 &&
+                player.py >= -2
+              ) {
+                failed = true
+              }
+            } else if (o.kind === 'gate') {
+              const tipX = o.x + Math.sin(o.ang) * 95
+              const tipY = gy - 130 + Math.cos(o.ang) * 95
+              if (Math.hypot(tipX - beanX, tipY - beanY) < 32) failed = true
             }
-          } else if (o.kind === 'popper') {
-            const up = Math.max(0, Math.sin(o.t + o.phase))
-            const height = 20 + up * 78
-            if (Math.abs(beanX - o.x) < 22 && beanY > gy - height - 10 && player.py > -height) {
-              knockBack(player, 85)
-            }
-          } else if (o.kind === 'bumper') {
-            const bx = o.x + Math.sin(o.t) * o.amp
-            const by = gy + o.yOff + Math.cos(o.t * 0.7) * 18
-            if (Math.hypot(bx - beanX, by - beanY) < 38) {
-              player.px += bx > beanX ? -70 : 70
-              player.vy = -340
-              player.onGround = false
-            }
-          } else if (o.kind === 'gap') {
-            if (
-              player.onGround &&
-              beanX > o.x + 8 &&
-              beanX < o.x + o.w - 8 &&
-              player.py >= -2
-            ) {
-              player.px = o.x - 40
-              player.vy = -180
-              player.onGround = false
-            }
-          } else if (o.kind === 'conveyor') {
+            if (failed) break
+          }
+        }
+
+        if (failed) {
+          failAndRestart(now)
+        } else {
+          for (const o of obstacles) {
+            if (o.kind !== 'conveyor') continue
             if (
               player.onGround &&
               beanX > o.x &&
@@ -333,21 +350,17 @@ export function FallGuysGame({
             ) {
               player.px += o.dir * 160 * dt
             }
-          } else if (o.kind === 'gate') {
-            const tipX = o.x + Math.sin(o.ang) * 95
-            const tipY = gy - 130 + Math.cos(o.ang) * 95
-            if (Math.hypot(tipX - beanX, tipY - beanY) < 32) knockBack(player, 105)
           }
-        }
 
-        player.px = Math.max(40, Math.min(FINISH_X, player.px))
-        if (player.px >= FINISH_X - 2) {
-          finished = true
-          setLocalFinished(true)
-          onProgressRef.current(1, true)
-        } else if (now - lastSend > 100) {
-          lastSend = now
-          onProgressRef.current(player.px / FINISH_X, false)
+          player.px = Math.max(40, Math.min(FINISH_X, player.px))
+          if (player.px >= FINISH_X - 2) {
+            finished = true
+            setLocalFinished(true)
+            onProgressRef.current(1, true)
+          } else if (now - lastSend > 100) {
+            lastSend = now
+            onProgressRef.current(player.px / FINISH_X, false)
+          }
         }
       }
 
@@ -506,7 +519,9 @@ export function FallGuysGame({
         }
       }
       if (!watching) {
-        drawBean(ctx, player.px - camX, gy - 28 + player.py, selfName.slice(0, 8), '#38bdf8', 1)
+        const blink =
+          now < invulnUntil && Math.floor(now / 80) % 2 === 0 ? 0.35 : 1
+        drawBean(ctx, player.px - camX, gy - 28 + player.py, selfName.slice(0, 8), '#38bdf8', blink)
       }
 
       const barProg = watching
