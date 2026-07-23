@@ -9,6 +9,7 @@ export type AnimalKind =
   | 'worm' // undulate
   | 'snake' // slither
   | 'dragon' // walks on land, flies over water, breathes fire (E)
+  | 'godzilla' // bipedal kaiju, bites (E)
   | 'yoda' // tiny shuffle
 
 export const ANIMAL_KIND_LABELS: Record<AnimalKind, string> = {
@@ -19,6 +20,7 @@ export const ANIMAL_KIND_LABELS: Record<AnimalKind, string> = {
   worm: 'หนอน',
   snake: 'งู',
   dragon: 'มังกร',
+  godzilla: 'ก้อตซิลล่า',
   yoda: 'Yoda',
 }
 
@@ -119,8 +121,13 @@ export interface PeerPresence {
   jumpAt?: number
   /** Timestamp of last dragon fire breath — remotes replay the VFX when this changes. */
   fireAt?: number
+  /** Timestamp of last Godzilla bite — remotes replay the VFX when this changes. */
+  biteAt?: number
   /** Holding crouch (Ctrl) — remotes mirror the squat pose. */
   crouching?: boolean
+  /** Pond bobber target while fishing; omit when not casting. */
+  fishX?: number
+  fishY?: number
   updatedAt: number
 }
 

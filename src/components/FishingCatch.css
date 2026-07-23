@@ -25,6 +25,52 @@
   text-align: center;
 }
 
+.fish-catch__rarity {
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  padding: 0.15rem 0.55rem;
+  border-radius: 999px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  background: rgba(15, 23, 42, 0.55);
+}
+
+.fish-catch.rarity-uncommon .fish-catch__rarity {
+  color: #6ee7b7;
+  border-color: rgba(110, 231, 183, 0.45);
+}
+
+.fish-catch.rarity-rare .fish-catch__rarity {
+  color: #7dd3fc;
+  border-color: rgba(125, 211, 252, 0.5);
+}
+
+.fish-catch.rarity-legendary .fish-catch__rarity {
+  color: #fbbf24;
+  border-color: rgba(251, 191, 36, 0.55);
+}
+
+.fish-catch.rarity-junk .fish-catch__rarity {
+  color: #a8a29e;
+  border-color: rgba(168, 162, 158, 0.4);
+}
+
+.fish-catch.rarity-mythic .fish-catch__frame {
+  border-color: rgba(251, 191, 36, 0.9);
+  box-shadow:
+    0 18px 48px rgba(0, 0, 0, 0.5),
+    0 0 28px rgba(251, 191, 36, 0.35),
+    0 0 0 6px rgba(251, 191, 36, 0.15);
+}
+
+.fish-catch.rarity-mythic .fish-catch__rarity {
+  color: #fde68a;
+  border-color: rgba(253, 230, 138, 0.7);
+  background: rgba(120, 53, 15, 0.55);
+}
+
 .fish-catch__emoji {
   font-size: 4rem;
   line-height: 1;

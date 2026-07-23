@@ -236,7 +236,9 @@ export function WorldView() {
 
   const jumpAtRef = useRef(0)
   const fireAtRef = useRef(0)
+  const biteAtRef = useRef(0)
   const crouchingRef = useRef(false)
+  const fishCastRef = useRef<{ x: number; y: number } | null>(null)
 
   const publish = useCallback(() => {
     const bus = busRef.current
@@ -256,6 +258,8 @@ export function WorldView() {
         jumpAtRef.current || undefined,
         fireAtRef.current || undefined,
         crouchingRef.current || undefined,
+        biteAtRef.current || undefined,
+        fishCastRef.current,
       ),
     )
   }, [map, session, voiceOn, sharing])
@@ -661,14 +665,16 @@ export function WorldView() {
       }
       if (e.code === 'KeyE' && !e.repeat) {
         e.preventDefault()
-        // Dragon-only fire breath
         const look = lookRef.current
-        if (
-          look.species === 'animal' &&
-          normalizeAnimalKind(look.animalKind) === 'dragon'
-        ) {
+        if (look.species !== 'animal') return
+        const kind = normalizeAnimalKind(look.animalKind)
+        if (kind === 'dragon') {
           sceneRef.current?.breathFire()
           fireAtRef.current = Date.now()
+          publishRef.current()
+        } else if (kind === 'godzilla') {
+          sceneRef.current?.bite()
+          biteAtRef.current = Date.now()
           publishRef.current()
         }
       }
@@ -1108,7 +1114,9 @@ export function WorldView() {
     fishingActiveRef.current = false
     setFishingActive(false)
     setFishCatch(null)
+    fishCastRef.current = null
     sceneRef.current?.setFishingCast(false, null)
+    publishRef.current()
   }, [clearFishTimer])
   stopFishingRef.current = stopFishing
 
@@ -1134,7 +1142,9 @@ export function WorldView() {
     fishingActiveRef.current = true
     setFishingActive(true)
     setFishCatch(null)
+    fishCastRef.current = { x: target.x, y: target.y }
     sceneRef.current?.setFishingCast(true, target)
+    publishRef.current()
     const wait = randomFishWaitMs()
     fishTimerRef.current = window.setTimeout(() => {
       if (!fishingActiveRef.current) return
@@ -1145,7 +1155,9 @@ export function WorldView() {
       const caught = randomFishingCatch()
       fishPhaseRef.current = 'catch'
       setFishCatch(caught)
+      fishCastRef.current = null
       sceneRef.current?.setFishingCast(false, null)
+      publishRef.current()
       fishTimerRef.current = window.setTimeout(() => {
         setFishCatch(null)
         if (!fishingActiveRef.current) return
@@ -1246,8 +1258,11 @@ export function WorldView() {
     <div className="world">
       <header className="world__bar">
         <div className="world__brand">
-          <strong>TrueID Office</strong>
-          <span>{session.look.displayName}</span>
+          <img className="world__logo" src="/favicon.svg" alt="" width={28} height={28} />
+          <div className="world__brand-text">
+            <strong>TrueID Office</strong>
+            <span>{session.look.displayName}</span>
+          </div>
         </div>
         <div className="world__meta">
           <div className="world__meta-item">
