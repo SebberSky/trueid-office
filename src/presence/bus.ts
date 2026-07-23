@@ -123,6 +123,7 @@ export function makePresence(
   crouching?: boolean,
   biteAt?: number,
   fishCast?: { x: number; y: number } | null,
+  spitAt?: number,
 ): PeerPresence {
   return {
     id,
@@ -136,6 +137,7 @@ export function makePresence(
     sharing,
     jumpAt,
     fireAt,
+    spitAt,
     biteAt,
     crouching,
     fishX: fishCast?.x,
