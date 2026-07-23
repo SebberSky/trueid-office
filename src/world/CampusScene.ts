@@ -7,7 +7,7 @@ import type { CharacterLook, Facing, PeerPresence, RoomDef } from '../types'
 import { canFlyOverWater } from '../types'
 import { FALLGUYS_ROOM_ID } from '../fallguys/types'
 import { XO_ROOM_ID } from '../xo/types'
-import { playMetallicClang, playPoisonSpit, playGodzillaBite } from '../media/sfx'
+import { playMetallicClang, playPoisonSpit, playGodzillaBite, playDragonFire } from '../media/sfx'
 
 /** 1 = max zoom in (character). Min zoom stays mid-range — no full-map pullback. */
 const ZOOM_DEFAULT = 0.42
@@ -753,6 +753,7 @@ export class CampusScene {
   /** Dragon fire breath (E) — VFX + burn anyone in the forward cone. */
   breathFire() {
     this.player.triggerFireBreath()
+    playDragonFire()
     this.applyFireCone(
       this.player,
       this.lastLocalPos.x,
@@ -1041,6 +1042,7 @@ export class CampusScene {
       if (p.fireAt && p.fireAt !== motion.lastFireAt) {
         motion.lastFireAt = p.fireAt
         avatar.triggerFireBreath()
+        playDragonFire()
         this.applyFireCone(avatar, motion.x, motion.y, motion.facing)
       }
       if (p.spitAt && p.spitAt !== motion.lastSpitAt) {
