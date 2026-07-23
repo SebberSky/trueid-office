@@ -49,8 +49,16 @@
   flex-shrink: 0;
 }
 
-.chat__chevron {
+.chat__head-actions {
   margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  flex-shrink: 0;
+}
+
+.chat__mute,
+.chat__chevron {
   flex-shrink: 0;
   width: 1.6rem;
   height: 1.6rem;
@@ -66,10 +74,23 @@
   transition: background 0.15s, color 0.15s, border-color 0.15s;
 }
 
+.chat__mute:hover,
 .chat__chevron:hover {
   color: #e2e8f0;
   border-color: rgba(94, 234, 212, 0.45);
   background: rgba(26, 155, 142, 0.18);
+}
+
+.chat__mute.is-muted {
+  color: #fca5a5;
+  border-color: rgba(248, 113, 113, 0.4);
+  background: rgba(185, 28, 28, 0.18);
+}
+
+.chat__mute.is-muted:hover {
+  color: #fecaca;
+  border-color: rgba(252, 165, 165, 0.55);
+  background: rgba(185, 28, 28, 0.28);
 }
 
 .chat.is-collapsed {

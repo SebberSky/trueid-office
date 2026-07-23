@@ -191,6 +191,25 @@
   color: #fca5a5;
 }
 
+.roster__speaking {
+  display: inline-flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 14px;
+  padding: 0 2px;
+  color: #5eead4;
+}
+
+.roster__speaking i {
+  display: block;
+  width: 3px;
+  min-height: 3px;
+  border-radius: 1px;
+  background: currentColor;
+  box-shadow: 0 0 6px rgba(45, 212, 191, 0.65);
+  transition: height 0.08s linear;
+}
+
 .world__meta-item {
   position: relative;
 }

@@ -86,6 +86,8 @@ export type ServerMsg =
   | { type: 'xo-ack'; ok: boolean; phase: string; zone: number; detail?: string }
   /** Another device logged in with the same email — this socket must stop. */
   | { type: 'session-replaced'; reason?: string }
+  /** Host is about to restart (pm2) — clients should prepare to refresh. */
+  | { type: 'server-updating'; inSec: number; at: number }
   | { type: 'error'; message: string }
 
 export type { SignalData, CharacterLook, PeerPresence, ChatMessage, PinnedMessage, ActivityEvent }

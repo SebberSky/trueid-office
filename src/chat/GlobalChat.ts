@@ -3,7 +3,7 @@ import type { ChatMessage } from './types'
 import { CHAT_MAX } from './types'
 import type { OfficeSocket } from '../net/OfficeSocket'
 import type { ServerMsg } from '../../shared/protocol'
-import { playChatIncoming } from '../media/sfx'
+import { playChatPublicIncoming } from '../media/sfx'
 
 /** Campus-wide chat via multiplayer WebSocket. */
 export class GlobalChatBus {
@@ -22,7 +22,7 @@ export class GlobalChatBus {
   private onServer(msg: ServerMsg) {
     if (msg.type !== 'chat') return
     if (msg.message.fromId === this.selfId) return
-    playChatIncoming()
+    playChatPublicIncoming()
     this.push(msg.message)
   }
 

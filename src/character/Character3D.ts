@@ -65,6 +65,12 @@ export class Character3D {
   private label: THREE.Sprite
   private labelName = ''
   private labelVoiceOn = false
+  /** Live speaking badge above the nameplate (driven by mic RMS). */
+  private speakSprite: THREE.Sprite | null = null
+  private speakLevel = 0
+  private speakPhase = 0
+  private speakCanvas: HTMLCanvasElement | null = null
+  private speakCtx: CanvasRenderingContext2D | null = null
   private gait: Gait = 'human'
   private animalKind: AnimalKind | null = null
   private wingL: THREE.Object3D | null = null
@@ -591,6 +597,29 @@ export class Character3D {
     this.root.add(this.label)
   }
 
+  /**
+   * Pulse a speaking icon from real mic loudness (0..1).
+   * Call every frame; fades out when silent.
+   */
+  setSpeakingLevel(raw: number) {
+    const target = Math.max(0, Math.min(1, raw))
+    this.speakLevel += (target - this.speakLevel) * 0.55
+    if (this.speakLevel < 0.045 && target < 0.045) {
+      this.speakLevel = 0
+      if (this.speakSprite) this.speakSprite.visible = false
+      return
+    }
+    this.speakPhase += 0.42 + this.speakLevel * 0.55
+    this.ensureSpeakSprite()
+    paintSpeakSprite(this.speakCtx!, this.speakLevel, this.speakPhase)
+    const map = (this.speakSprite!.material as THREE.SpriteMaterial).map
+    if (map) map.needsUpdate = true
+    this.speakSprite!.visible = true
+    const pulse = 0.52 + this.speakLevel * 0.42
+    this.speakSprite!.scale.set(pulse * 1.15, pulse * 0.62, 1)
+    this.speakSprite!.position.y = this.label.position.y + 0.48
+  }
+
   /** Visual-only hop — does not change map collision / terrain. */
   triggerJump() {
     if (this.jumpY > 0.02 || this.jumpVel > 0) return
@@ -801,6 +830,32 @@ export class Character3D {
       this.body.position.x += shake
       this.body.rotation.z += shake * 0.9
     }
+    if (this.speakSprite?.visible) {
+      this.speakSprite.position.y = this.label.position.y + 0.48
+    }
+  }
+
+  private ensureSpeakSprite() {
+    if (this.speakSprite) return
+    const canvas = document.createElement('canvas')
+    canvas.width = 128
+    canvas.height = 72
+    this.speakCanvas = canvas
+    this.speakCtx = canvas.getContext('2d')
+    const tex = new THREE.CanvasTexture(canvas)
+    tex.magFilter = THREE.LinearFilter
+    tex.minFilter = THREE.LinearFilter
+    const mat = new THREE.SpriteMaterial({
+      map: tex,
+      transparent: true,
+      depthTest: false,
+      depthWrite: false,
+    })
+    this.speakSprite = new THREE.Sprite(mat)
+    this.speakSprite.scale.set(0.7, 0.4, 1)
+    this.speakSprite.position.y = this.labelBaseY + 0.48
+    this.speakSprite.visible = false
+    this.root.add(this.speakSprite)
   }
 
   private stepCrouch(dt: number, crouching: boolean) {
@@ -1224,6 +1279,14 @@ export class Character3D {
   }
 
   dispose() {
+    if (this.speakSprite) {
+      this.root.remove(this.speakSprite)
+      this.speakSprite.material.dispose()
+      ;(this.speakSprite.material as THREE.SpriteMaterial).map?.dispose()
+      this.speakSprite = null
+      this.speakCanvas = null
+      this.speakCtx = null
+    }
     this.root.traverse((obj) => {
       if (obj instanceof THREE.Mesh) {
         obj.geometry.dispose()
@@ -1233,6 +1296,73 @@ export class Character3D {
       }
     })
   }
+}
+
+function paintSpeakSprite(ctx: CanvasRenderingContext2D, level: number, phase: number) {
+  const w = 128
+  const h = 72
+  ctx.clearRect(0, 0, w, h)
+
+  // Soft teal pill
+  const alpha = 0.55 + level * 0.4
+  ctx.fillStyle = `rgba(13, 148, 136, ${alpha})`
+  roundRect2d(ctx, 8, 10, w - 16, h - 20, 14)
+  ctx.fill()
+  ctx.strokeStyle = `rgba(153, 246, 228, ${0.45 + level * 0.5})`
+  ctx.lineWidth = 3
+  ctx.stroke()
+
+  // Mic glyph
+  ctx.fillStyle = '#ecfef8'
+  ctx.beginPath()
+  ctx.ellipse(34, 34, 8, 11, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillRect(30, 42, 8, 6)
+  ctx.strokeStyle = '#ecfef8'
+  ctx.lineWidth = 2.5
+  ctx.beginPath()
+  ctx.arc(34, 42, 11, 0.15 * Math.PI, 0.85 * Math.PI)
+  ctx.stroke()
+  ctx.beginPath()
+  ctx.moveTo(34, 52)
+  ctx.lineTo(34, 58)
+  ctx.moveTo(28, 58)
+  ctx.lineTo(40, 58)
+  ctx.stroke()
+
+  // Wave bars driven by real level + phase offset (reads as live audio)
+  const bars = 5
+  const baseX = 56
+  const barW = 8
+  const gap = 5
+  const maxH = 36
+  for (let i = 0; i < bars; i++) {
+    const wave = Math.abs(Math.sin(phase + i * 0.85))
+    const bh = Math.max(4, (0.22 + level * 0.78) * (0.35 + wave * 0.65) * maxH)
+    const x = baseX + i * (barW + gap)
+    const y = 36 - bh / 2
+    ctx.fillStyle = '#fff'
+    roundRect2d(ctx, x, y, barW, bh, 3)
+    ctx.fill()
+  }
+}
+
+function roundRect2d(
+  ctx: CanvasRenderingContext2D,
+  x: number,
+  y: number,
+  w: number,
+  h: number,
+  r: number,
+) {
+  const rr = Math.min(r, w / 2, h / 2)
+  ctx.beginPath()
+  ctx.moveTo(x + rr, y)
+  ctx.arcTo(x + w, y, x + w, y + h, rr)
+  ctx.arcTo(x + w, y + h, x, y + h, rr)
+  ctx.arcTo(x, y + h, x, y, rr)
+  ctx.arcTo(x, y, x + w, y, rr)
+  ctx.closePath()
 }
 
 function makeStarMesh() {
