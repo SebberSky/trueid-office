@@ -88,26 +88,23 @@ export class Character3D {
   private starT = 0
   private starPhase = 0
   private starGroup: THREE.Group | null = null
-  /** Charred look: hold black, then fade back to original colors. */
-  private burnHoldT = 0
-  private burnFadeT = 0
-  private burnFadeDur = 0.9
+  /** Body materials + true original colors (captured once). */
   private burnParts: { mat: THREE.MeshLambertMaterial; orig: THREE.Color }[] = []
+  /** Hit stains share one clock so stacked effects never leave orphan colors. */
+  private burnHoldT = 0
+  private bloodHoldT = 0
+  private poisonHoldT = 0
+  private poisonShakeT = 0
+  private bloodParts: { mat: THREE.MeshLambertMaterial; orig: THREE.Color }[] = []
+  private poisonParts: { mat: THREE.MeshLambertMaterial; orig: THREE.Color }[] = []
+  private statusFadeT = 0
+  private statusFadeDur = 0.9
+  private statusFadeFrom: { mat: THREE.MeshLambertMaterial; from: THREE.Color; orig: THREE.Color }[] =
+    []
   private static readonly BURN_HOLD = 5
   private static readonly BURN_COLOR = new THREE.Color(0x0c0c0c)
-  /** Blood stains (partial body) — hold red blotches, then fade out. */
-  private bloodHoldT = 0
-  private bloodFadeT = 0
-  private bloodFadeDur = 0.9
-  private bloodParts: { mat: THREE.MeshLambertMaterial; orig: THREE.Color }[] = []
   private static readonly BLOOD_HOLD = 5
   private static readonly BLOOD_COLOR = new THREE.Color(0xb91c1c)
-  /** Poison stains — dark purple spots + shake, then fade. */
-  private poisonHoldT = 0
-  private poisonFadeT = 0
-  private poisonFadeDur = 0.9
-  private poisonParts: { mat: THREE.MeshLambertMaterial; orig: THREE.Color }[] = []
-  private poisonShakeT = 0
   private static readonly POISON_HOLD = 5
   private static readonly POISON_COLOR = new THREE.Color(0x4a0e6b)
 
@@ -696,17 +693,16 @@ export class Character3D {
   /** Char this avatar black for ~5s, then fade back to chosen colors. */
   applyBurn(holdSec = Character3D.BURN_HOLD, fadeSec = 0.9) {
     this.ensureBurnParts()
+    this.cancelStatusFade()
     this.burnHoldT = holdSec
-    this.burnFadeT = 0
-    this.burnFadeDur = fadeSec
-    for (const p of this.burnParts) {
-      p.mat.color.copy(Character3D.BURN_COLOR)
-    }
+    this.statusFadeDur = fadeSec
+    this.paintHitStatusColors()
   }
 
   /** Partial red blood stains on the body — hold ~5s, then fade (like burn). */
   applyBloodStain(holdSec = Character3D.BLOOD_HOLD, fadeSec = 0.9) {
     this.ensureBurnParts()
+    this.cancelStatusFade()
     // Stain only a subset so it reads as splatters, not a full-body recolor
     const pool = [...this.burnParts]
     for (let i = pool.length - 1; i > 0; i--) {
@@ -716,16 +712,14 @@ export class Character3D {
     const n = Math.max(2, Math.min(pool.length, Math.ceil(pool.length * 0.35)))
     this.bloodParts = pool.slice(0, n).map((p) => ({ mat: p.mat, orig: p.orig.clone() }))
     this.bloodHoldT = holdSec
-    this.bloodFadeT = 0
-    this.bloodFadeDur = fadeSec
-    for (const p of this.bloodParts) {
-      p.mat.color.copy(p.orig).lerp(Character3D.BLOOD_COLOR, 0.82)
-    }
+    this.statusFadeDur = fadeSec
+    this.paintHitStatusColors()
   }
 
   /** Partial dark-purple poison stains + shake — hold ~5s, then fade. */
   applyPoison(holdSec = Character3D.POISON_HOLD, fadeSec = 0.9) {
     this.ensureBurnParts()
+    this.cancelStatusFade()
     const pool = [...this.burnParts]
     for (let i = pool.length - 1; i > 0; i--) {
       const j = Math.floor(Math.random() * (i + 1))
@@ -734,12 +728,9 @@ export class Character3D {
     const n = Math.max(2, Math.min(pool.length, Math.ceil(pool.length * 0.32)))
     this.poisonParts = pool.slice(0, n).map((p) => ({ mat: p.mat, orig: p.orig.clone() }))
     this.poisonHoldT = holdSec
-    this.poisonFadeT = 0
-    this.poisonFadeDur = fadeSec
     this.poisonShakeT = holdSec
-    for (const p of this.poisonParts) {
-      p.mat.color.copy(p.orig).lerp(Character3D.POISON_COLOR, 0.88)
-    }
+    this.statusFadeDur = fadeSec
+    this.paintHitStatusColors()
   }
 
   isBreathingFire() {
@@ -776,9 +767,7 @@ export class Character3D {
     this.stepSpit(dt)
     this.stepBite(dt)
     this.stepSlap(dt)
-    this.stepBurn(dt)
-    this.stepBlood(dt)
-    this.stepPoison(dt)
+    this.stepHitStatus(dt)
     this.stepStars(dt)
     this.stepCrouch(dt, crouching)
     this.root.position.set(px, py + this.jumpY, pz)
@@ -964,71 +953,100 @@ export class Character3D {
     })
   }
 
-  private stepBurn(dt: number) {
-    if (this.burnHoldT <= 0 && this.burnFadeT <= 0) return
+  /** Rebuild body colors from originals + every active hit layer (no leftover stains). */
+  private paintHitStatusColors() {
+    for (const p of this.burnParts) p.mat.color.copy(p.orig)
     if (this.burnHoldT > 0) {
-      this.burnHoldT -= dt
-      if (this.burnHoldT > 0) return
-      this.burnHoldT = 0
-      this.burnFadeT = this.burnFadeDur
+      for (const p of this.burnParts) p.mat.color.copy(Character3D.BURN_COLOR)
     }
-    if (this.burnFadeT <= 0) return
-    this.burnFadeT -= dt
-    const t = 1 - Math.max(0, this.burnFadeT) / this.burnFadeDur
-    for (const p of this.burnParts) {
-      p.mat.color.copy(Character3D.BURN_COLOR).lerp(p.orig, t)
-    }
-    if (this.burnFadeT <= 0) {
-      this.burnFadeT = 0
-      for (const p of this.burnParts) p.mat.color.copy(p.orig)
-    }
-  }
-
-  private stepBlood(dt: number) {
-    if (this.bloodHoldT <= 0 && this.bloodFadeT <= 0) return
     if (this.bloodHoldT > 0) {
-      this.bloodHoldT -= dt
-      if (this.bloodHoldT > 0) return
-      this.bloodHoldT = 0
-      this.bloodFadeT = this.bloodFadeDur
+      for (const p of this.bloodParts) {
+        p.mat.color.copy(p.orig).lerp(Character3D.BLOOD_COLOR, 0.82)
+      }
     }
-    if (this.bloodFadeT <= 0) return
-    this.bloodFadeT -= dt
-    const t = 1 - Math.max(0, this.bloodFadeT) / this.bloodFadeDur
-    for (const p of this.bloodParts) {
-      const stained = p.orig.clone().lerp(Character3D.BLOOD_COLOR, 0.82)
-      p.mat.color.copy(stained).lerp(p.orig, t)
-    }
-    if (this.bloodFadeT <= 0) {
-      this.bloodFadeT = 0
-      for (const p of this.bloodParts) p.mat.color.copy(p.orig)
-      this.bloodParts = []
+    if (this.poisonHoldT > 0) {
+      for (const p of this.poisonParts) {
+        p.mat.color.copy(p.orig).lerp(Character3D.POISON_COLOR, 0.88)
+      }
     }
   }
 
-  private stepPoison(dt: number) {
-    if (this.poisonShakeT > 0) {
-      this.poisonShakeT = Math.max(0, this.poisonShakeT - dt)
+  private restoreAllBodyColors() {
+    for (const p of this.burnParts) p.mat.color.copy(p.orig)
+    this.bloodParts = []
+    this.poisonParts = []
+    this.burnHoldT = 0
+    this.bloodHoldT = 0
+    this.poisonHoldT = 0
+    this.poisonShakeT = 0
+    this.statusFadeT = 0
+    this.statusFadeFrom = []
+  }
+
+  private cancelStatusFade() {
+    if (this.statusFadeT <= 0 && this.statusFadeFrom.length === 0) return
+    this.statusFadeT = 0
+    this.statusFadeFrom = []
+  }
+
+  /** Snapshot current stained look and fade the whole body back to normal together. */
+  private beginUnifiedStatusFade() {
+    this.paintHitStatusColors()
+    this.statusFadeFrom = this.burnParts.map((p) => ({
+      mat: p.mat,
+      from: p.mat.color.clone(),
+      orig: p.orig,
+    }))
+    this.burnHoldT = 0
+    this.bloodHoldT = 0
+    this.poisonHoldT = 0
+    this.poisonShakeT = 0
+    this.bloodParts = []
+    this.poisonParts = []
+    this.statusFadeT = this.statusFadeDur > 0 ? this.statusFadeDur : 0.9
+  }
+
+  private stepHitStatus(dt: number) {
+    if (this.statusFadeT > 0) {
+      this.statusFadeT -= dt
+      const dur = this.statusFadeDur > 0 ? this.statusFadeDur : 0.9
+      const t = 1 - Math.max(0, this.statusFadeT) / dur
+      for (const p of this.statusFadeFrom) {
+        p.mat.color.copy(p.from).lerp(p.orig, t)
+      }
+      if (this.statusFadeT <= 0) {
+        this.restoreAllBodyColors()
+      }
+      return
     }
-    if (this.poisonHoldT <= 0 && this.poisonFadeT <= 0) return
+
+    const holds = [this.burnHoldT, this.bloodHoldT, this.poisonHoldT].filter((h) => h > 0)
+    if (holds.length === 0) return
+
+    // First effect to expire clears every stacked stain in one shared fade.
+    const minHold = Math.min(...holds)
+    if (minHold <= dt) {
+      this.beginUnifiedStatusFade()
+      this.statusFadeT -= dt
+      if (this.statusFadeT <= 0) {
+        this.restoreAllBodyColors()
+        return
+      }
+      const dur = this.statusFadeDur > 0 ? this.statusFadeDur : 0.9
+      const t = 1 - this.statusFadeT / dur
+      for (const p of this.statusFadeFrom) {
+        p.mat.color.copy(p.from).lerp(p.orig, t)
+      }
+      return
+    }
+
+    if (this.burnHoldT > 0) this.burnHoldT -= dt
+    if (this.bloodHoldT > 0) this.bloodHoldT -= dt
     if (this.poisonHoldT > 0) {
       this.poisonHoldT -= dt
-      if (this.poisonHoldT > 0) return
-      this.poisonHoldT = 0
-      this.poisonFadeT = this.poisonFadeDur
+      this.poisonShakeT = Math.max(0, this.poisonShakeT - dt)
     }
-    if (this.poisonFadeT <= 0) return
-    this.poisonFadeT -= dt
-    const t = 1 - Math.max(0, this.poisonFadeT) / this.poisonFadeDur
-    for (const p of this.poisonParts) {
-      const stained = p.orig.clone().lerp(Character3D.POISON_COLOR, 0.88)
-      p.mat.color.copy(stained).lerp(p.orig, t)
-    }
-    if (this.poisonFadeT <= 0) {
-      this.poisonFadeT = 0
-      for (const p of this.poisonParts) p.mat.color.copy(p.orig)
-      this.poisonParts = []
-    }
+    this.paintHitStatusColors()
   }
 
   /** Idle hover while floating above water. */

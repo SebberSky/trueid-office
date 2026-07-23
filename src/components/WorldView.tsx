@@ -1268,6 +1268,79 @@ export function WorldView() {
     if (!canUseNameWheel && wheelOpen) setWheelOpen(false)
   }, [canUseNameWheel, wheelOpen])
 
+  const warpToPeer = useCallback(
+    (person: RosterPerson) => {
+      // Locked into Fall Guys / XO pad — can't leave via warp
+      if (fgRoleRef.current === 'player' || xoRoleRef.current === 'player') return
+
+      const peer = peersRef.current.find((p) => p.id === person.id)
+      if (!peer) return
+
+      const canFly = canFlyOverWater(lookRef.current)
+      const radius = 8
+      const offsets: [number, number][] = [
+        [0, TILE * 0.9],
+        [0, -TILE * 0.9],
+        [TILE * 0.9, 0],
+        [-TILE * 0.9, 0],
+        [TILE * 0.65, TILE * 0.65],
+        [-TILE * 0.65, TILE * 0.65],
+        [TILE * 0.65, -TILE * 0.65],
+        [-TILE * 0.65, -TILE * 0.65],
+        [0, TILE * 1.4],
+        [0, -TILE * 1.4],
+        [TILE * 1.4, 0],
+        [-TILE * 1.4, 0],
+      ]
+
+      const canStandAt = (x: number, y: number) => {
+        const samples = [
+          [x, y],
+          [x - radius, y],
+          [x + radius, y],
+          [x, y - radius],
+          [x, y + radius],
+        ]
+        for (const [sx, sy] of samples) {
+          const tx = Math.floor(sx / TILE)
+          const ty = Math.floor(sy / TILE)
+          if (!canTraverse(map, tx, ty, canFly)) return false
+        }
+        const prevRoom = roomAt(map, pos.current.x, pos.current.y)
+        const nextRoom = roomAt(map, x, y)
+        if (nextRoom && (!prevRoom || prevRoom.id !== nextRoom.id)) {
+          if (lockedRoomsRef.current.has(nextRoom.id)) return false
+          if (!isUnlimited(nextRoom) || nextRoom.id === XO_ROOM_ID) {
+            const others = peersRef.current.filter((p) => p.roomId === nextRoom.id).length
+            if (others + 1 > nextRoom.capacity) return false
+          }
+        }
+        return true
+      }
+
+      let dest: { x: number; y: number } | null = null
+      for (const [ox, oy] of offsets) {
+        const x = peer.x + ox
+        const y = peer.y + oy
+        if (canStandAt(x, y)) {
+          dest = { x, y }
+          break
+        }
+      }
+      if (!dest) return
+
+      if (fishingActiveRef.current) stopFishingRef.current()
+
+      pos.current.x = dest.x
+      pos.current.y = dest.y
+      facing.current = CampusScene.facingTowardWater(dest.x, dest.y, peer.x, peer.y)
+      setLastPose({ x: dest.x, y: dest.y, facing: facing.current })
+      publishRef.current()
+      setRoster(null)
+    },
+    [map, setLastPose],
+  )
+
   return (
     <div className="world">
       <header className="world__bar">
@@ -1299,6 +1372,7 @@ export function WorldView() {
                 dmChatRef.current?.open(person.id, person.name)
                 setRoster(null)
               }}
+              onWarp={warpToPeer}
             />
           </div>
           {roomName ? (
@@ -1320,6 +1394,7 @@ export function WorldView() {
                 people={roomPeople}
                 onClose={() => setRoster(null)}
                 anchorRef={roomBtnRef}
+                onWarp={warpToPeer}
               />
             </div>
           ) : (
@@ -1573,7 +1648,16 @@ export function WorldView() {
                 title={voiceOn ? 'ปิดไมค์' : 'เปิดไมค์'}
                 aria-label={voiceOn ? 'ปิดไมค์' : 'เปิดไมค์'}
               >
-                {voiceOn ? '🔇' : '🎤'}
+                {voiceOn ? (
+                  <svg viewBox="0 0 24 24" width="22" height="22" aria-hidden="true">
+                    <path
+                      fill="currentColor"
+                      d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3 3 4.27l6.01 6.01V11c0 1.66 1.33 3 2.99 3 .22 0 .44-.03.65-.08l1.66 1.66c-.7.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"
+                    />
+                  </svg>
+                ) : (
+                  '🎤'
+                )}
               </button>
               <button
                 type="button"

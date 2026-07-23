@@ -22,9 +22,19 @@ interface Props {
   anchorRef?: RefObject<HTMLElement | null>
   /** Start a private chat (server roster). */
   onStartDm?: (person: RosterPerson) => void
+  /** Warp / teleport next to this person. */
+  onWarp?: (person: RosterPerson) => void
 }
 
-export function OnlineRoster({ open, title, people, onClose, anchorRef, onStartDm }: Props) {
+export function OnlineRoster({
+  open,
+  title,
+  people,
+  onClose,
+  anchorRef,
+  onStartDm,
+  onWarp,
+}: Props) {
   const panelRef = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -75,29 +85,52 @@ export function OnlineRoster({ open, title, people, onClose, anchorRef, onStartD
                     {p.sharing ? <span title="กำลังแชร์จอ">🖥</span> : null}
                   </div>
                 </div>
-                {onStartDm && !p.isSelf && (
-                  <button
-                    type="button"
-                    className="roster__dm"
-                    title={`แชทส่วนตัวกับ ${p.name}`}
-                    aria-label={`แชทส่วนตัวกับ ${p.name}`}
-                    onClick={(e) => {
-                      e.stopPropagation()
-                      onStartDm(p)
-                    }}
-                  >
-                    <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
-                      <path
-                        fill="currentColor"
-                        d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"
-                      />
-                    </svg>
-                    {(p.dmUnread ?? 0) > 0 && (
-                      <span className="roster__dm-badge">
-                        {p.dmUnread! > 9 ? '9+' : p.dmUnread}
-                      </span>
+                {!p.isSelf && (onWarp || onStartDm) && (
+                  <div className="roster__actions">
+                    {onWarp && (
+                      <button
+                        type="button"
+                        className="roster__warp"
+                        title={`วาปไปหา ${p.name}`}
+                        aria-label={`วาปไปหา ${p.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onWarp(p)
+                        }}
+                      >
+                        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                          <path
+                            fill="currentColor"
+                            d="M12 2C8.1 2 5 5.1 5 9c0 5.2 7 13 7 13s7-7.8 7-13c0-3.9-3.1-7-7-7zm0 9.5c-1.4 0-2.5-1.1-2.5-2.5S10.6 6.5 12 6.5s2.5 1.1 2.5 2.5S13.4 11.5 12 11.5z"
+                          />
+                        </svg>
+                      </button>
                     )}
-                  </button>
+                    {onStartDm && (
+                      <button
+                        type="button"
+                        className="roster__dm"
+                        title={`แชทส่วนตัวกับ ${p.name}`}
+                        aria-label={`แชทส่วนตัวกับ ${p.name}`}
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          onStartDm(p)
+                        }}
+                      >
+                        <svg viewBox="0 0 24 24" width="16" height="16" aria-hidden="true">
+                          <path
+                            fill="currentColor"
+                            d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.2L4 17.2V4h16v12z"
+                          />
+                        </svg>
+                        {(p.dmUnread ?? 0) > 0 && (
+                          <span className="roster__dm-badge">
+                            {p.dmUnread! > 9 ? '9+' : p.dmUnread}
+                          </span>
+                        )}
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
             </li>
