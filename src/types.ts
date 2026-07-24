@@ -107,9 +107,11 @@ export interface RoomDef {
 
 export type DoorSide = RoomDef['door']
 
-export interface PeerPresence {
+export type Facing = 'down' | 'up' | 'left' | 'right'
+
+/** Shared runtime body — everything a character can be/do on the map. */
+export interface ActorPresenceBase {
   id: string
-  email: string
   look: CharacterLook
   x: number
   y: number
@@ -137,6 +139,79 @@ export interface PeerPresence {
   updatedAt: number
 }
 
-export type Facing = 'down' | 'up' | 'left' | 'right'
+export interface UserPresence extends ActorPresenceBase {
+  kind: 'user'
+  email: string
+}
+
+export interface NpcPresence extends ActorPresenceBase {
+  kind: 'npc'
+  /** Stable NPC identity for later phases (role, script, interact). */
+  npcKey: string
+}
+
+export type ActorPresence = UserPresence | NpcPresence
+
+/** @deprecated Prefer ActorPresence — alias kept for gradual migration. */
+export type PeerPresence = ActorPresence
+
+/** Loose wire shape (older clients may omit `kind`). */
+export type WireActorPresence = ActorPresenceBase & {
+  kind?: 'user' | 'npc'
+  email?: string
+  npcKey?: string
+}
+
+export function isUserPresence(p: ActorPresence): p is UserPresence {
+  return p.kind === 'user'
+}
+
+export function isNpcPresence(p: ActorPresence): p is NpcPresence {
+  return p.kind === 'npc'
+}
+
+/** Display label — never assumes email exists (NPCs have none). */
+export function actorLabel(p: ActorPresenceBase & { email?: string }): string {
+  const name = p.look?.displayName?.trim()
+  if (name) return name
+  if (p.email?.trim()) return p.email.trim()
+  return p.id
+}
+
+/** Normalize inbound presence: missing `kind` → user (same-deploy safety). */
+export function normalizeActorPresence(raw: WireActorPresence): ActorPresence {
+  const base: ActorPresenceBase = {
+    id: raw.id,
+    look: raw.look,
+    x: raw.x,
+    y: raw.y,
+    facing: raw.facing,
+    roomId: raw.roomId,
+    voiceOn: !!raw.voiceOn,
+    sharing: !!raw.sharing,
+    jumpAt: raw.jumpAt,
+    fireAt: raw.fireAt,
+    spitAt: raw.spitAt,
+    biteAt: raw.biteAt,
+    slapAt: raw.slapAt,
+    cryAt: raw.cryAt,
+    crouching: raw.crouching,
+    fishX: raw.fishX,
+    fishY: raw.fishY,
+    updatedAt: raw.updatedAt,
+  }
+  if (raw.kind === 'npc') {
+    return {
+      ...base,
+      kind: 'npc',
+      npcKey: (raw.npcKey || raw.id || 'npc').trim() || 'npc',
+    }
+  }
+  return {
+    ...base,
+    kind: 'user',
+    email: (raw.email || '').trim().toLowerCase(),
+  }
+}
 
 export type AppScreen = 'login' | 'creator' | 'world'

@@ -1,4 +1,5 @@
-import type { Facing, PeerPresence, CharacterLook } from '../types'
+import type { Facing, ActorPresence, CharacterLook, UserPresence, WireActorPresence } from '../types'
+import { normalizeActorPresence } from '../types'
 import type { OfficeSocket } from '../net/OfficeSocket'
 import type { ServerMsg } from '../../shared/protocol'
 
@@ -15,7 +16,7 @@ export type SignalData =
 
 /** Multiplayer presence + WebRTC signaling over the shared OfficeSocket. */
 export class PresenceBus {
-  private peers = new Map<string, PeerPresence>()
+  private peers = new Map<string, ActorPresence>()
   private listeners = new Set<() => void>()
   private signalListeners = new Set<(from: string, data: SignalData) => void>()
   private selfId: string
@@ -46,13 +47,15 @@ export class PresenceBus {
   private onServer(msg: ServerMsg) {
     if (msg.type === 'welcome') {
       for (const p of msg.peers) {
-        if (p.id !== this.selfId) this.peers.set(p.id, p)
+        const peer = normalizeActorPresence(p as WireActorPresence)
+        if (peer.id !== this.selfId) this.peers.set(peer.id, peer)
       }
       this.emit()
       return
     }
     if (msg.type === 'presence' && msg.peer.id !== this.selfId) {
-      this.peers.set(msg.peer.id, msg.peer)
+      const peer = normalizeActorPresence(msg.peer as WireActorPresence)
+      this.peers.set(peer.id, peer)
       this.emit()
       return
     }
@@ -66,7 +69,7 @@ export class PresenceBus {
     }
   }
 
-  publish(peer: PeerPresence) {
+  publish(peer: ActorPresence) {
     this.net.send({ type: 'presence', peer })
   }
 
@@ -78,7 +81,7 @@ export class PresenceBus {
     this.net.send({ type: 'signal', to, data })
   }
 
-  getPeers(): PeerPresence[] {
+  getPeers(): ActorPresence[] {
     const now = Date.now()
     for (const [id, p] of this.peers) {
       if (now - p.updatedAt > STALE_MS) this.peers.delete(id)
@@ -108,7 +111,7 @@ export class PresenceBus {
   }
 }
 
-export function makePresence(
+export function makeUserPresence(
   id: string,
   email: string,
   look: CharacterLook,
@@ -126,8 +129,9 @@ export function makePresence(
   spitAt?: number,
   slapAt?: number,
   cryAt?: number,
-): PeerPresence {
+): UserPresence {
   return {
+    kind: 'user',
     id,
     email,
     look,
@@ -149,5 +153,8 @@ export function makePresence(
     updatedAt: Date.now(),
   }
 }
+
+/** @deprecated Prefer makeUserPresence */
+export const makePresence = makeUserPresence
 
 export { HEARTBEAT_MS, MOVE_SEND_MS }

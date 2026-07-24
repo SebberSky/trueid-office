@@ -3,7 +3,7 @@ import type { WorldMap } from './terrain'
 import { MAP_H, MAP_W, TILE, isWaterAt, roomAt, roomDoor, tileAt } from './terrain'
 import { TERRAIN_HEIGHT, TERRAIN_HEX, surfaceY, toWorldXZ } from './heights'
 import { Character3D } from '../character/Character3D'
-import type { CharacterLook, Facing, PeerPresence, RoomDef } from '../types'
+import type { CharacterLook, Facing, ActorPresence, RoomDef } from '../types'
 import { canFlyOverWater, normalizeAnimalKind } from '../types'
 import { FALLGUYS_ROOM_ID } from '../fallguys/types'
 import { XO_ROOM_ID } from '../xo/types'
@@ -1020,7 +1020,7 @@ export class CampusScene {
     return dy < 0 ? 'up' : 'down'
   }
 
-  syncPeers(peers: PeerPresence[], map: WorldMap, dt = 0) {
+  syncPeers(peers: ActorPresence[], map: WorldMap, dt = 0) {
     setSfxListener(this.lastLocalPos.x, this.lastLocalPos.y)
     const seen = new Set<string>()
     for (const p of peers) {
