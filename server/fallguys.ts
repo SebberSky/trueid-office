@@ -1,5 +1,6 @@
 import type { WebSocket } from 'ws'
-import type { PeerPresence } from '../src/types'
+import type { ActorPresence } from '../src/types'
+import { actorLabel } from '../src/types'
 import type { ServerMsg } from '../shared/protocol'
 import {
   FALLGUYS_ROOM_ID,
@@ -12,7 +13,7 @@ type Client = {
   ws: WebSocket
   id: string | null
   email: string | null
-  peer: PeerPresence | null
+  peer: ActorPresence | null
 }
 
 type Deps = {
@@ -35,7 +36,8 @@ const arenaJoinedAt = new Map<string, number>()
 let raceTimer: ReturnType<typeof setTimeout> | null = null
 
 function nameOf(c: Client) {
-  return c.peer?.look?.displayName || c.email || c.id || '?'
+  if (c.peer) return actorLabel(c.peer)
+  return c.email || c.id || '?'
 }
 
 function inArena(deps: Deps): Client[] {

@@ -1,4 +1,4 @@
-import type { CharacterLook, Facing, PeerPresence } from '../src/types'
+import type { ActorPresence, CharacterLook, Facing, PeerPresence } from '../src/types'
 import type { ChatMessage, DmMessage, PinnedMessage } from '../src/chat/types'
 import type { ActivityEvent } from '../src/chat/RoomActivity'
 import type { SignalData } from '../src/presence/bus'
@@ -22,7 +22,7 @@ export type SavedPoseMsg = { x: number; y: number; facing: Facing }
 /** Client → Server */
 export type ClientMsg =
   | { type: 'hello'; id: string; email: string; look: CharacterLook }
-  | { type: 'presence'; peer: PeerPresence }
+  | { type: 'presence'; peer: ActorPresence }
   | { type: 'leave'; id: string }
   | { type: 'signal'; to: string; data: SignalData }
   | { type: 'chat'; message: ChatMessage }
@@ -48,7 +48,7 @@ export type ClientMsg =
 export type ServerMsg =
   | {
       type: 'welcome'
-      peers: PeerPresence[]
+      peers: ActorPresence[]
       lockedRooms: string[]
       pinnedMessages: PinnedMessage[]
       fallguys?: FallGuysLobbyState
@@ -58,7 +58,7 @@ export type ServerMsg =
       /** Last known map pose for this email (restored across devices). */
       lastPose?: SavedPoseMsg | null
     }
-  | { type: 'presence'; peer: PeerPresence }
+  | { type: 'presence'; peer: ActorPresence }
   | { type: 'leave'; id: string }
   | { type: 'signal'; from: string; data: SignalData }
   | { type: 'chat'; message: ChatMessage }
@@ -90,5 +90,13 @@ export type ServerMsg =
   | { type: 'server-updating'; inSec: number; at: number }
   | { type: 'error'; message: string }
 
-export type { SignalData, CharacterLook, PeerPresence, ChatMessage, PinnedMessage, ActivityEvent }
+export type {
+  SignalData,
+  CharacterLook,
+  ActorPresence,
+  PeerPresence,
+  ChatMessage,
+  PinnedMessage,
+  ActivityEvent,
+}
 export type { DmMessage } from '../src/chat/types'

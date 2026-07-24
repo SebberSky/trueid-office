@@ -1,6 +1,7 @@
 import http from 'node:http'
 import { WebSocketServer, type WebSocket } from 'ws'
-import type { PeerPresence } from '../src/types'
+import type { ActorPresence } from '../src/types'
+import { actorLabel, isUserPresence, normalizeActorPresence } from '../src/types'
 import type { PinnedMessage } from '../src/chat/types'
 import type { ClientMsg, ServerMsg } from '../shared/protocol'
 import { ensureDataDir, loadAppearance, saveAppearance } from './appearances'
@@ -33,7 +34,7 @@ type Client = {
   ws: WebSocket
   id: string | null
   email: string | null
-  peer: PeerPresence | null
+  peer: ActorPresence | null
   /** Skip auto-reconnect leave bookkeeping when we intentionally replace a session. */
   replaced?: boolean
   lastPoseSavedAt?: number
@@ -61,9 +62,9 @@ function broadcast(msg: ServerMsg, except?: WebSocket) {
   }
 }
 
-function livePeers(): PeerPresence[] {
+function livePeers(): ActorPresence[] {
   const now = Date.now()
-  const out: PeerPresence[] = []
+  const out: ActorPresence[] = []
   for (const c of clients) {
     if (!c.peer) continue
     if (now - c.peer.updatedAt > STALE_MS) continue
@@ -88,7 +89,7 @@ function occupantsIn(roomId: string): number {
   return n
 }
 
-function poseFromPeer(peer: PeerPresence | null): SavedPose | null {
+function poseFromPeer(peer: ActorPresence | null): SavedPose | null {
   if (!peer) return null
   return { x: peer.x, y: peer.y, facing: peer.facing }
 }
@@ -366,9 +367,12 @@ wss.on('connection', (ws) => {
 
     if (msg.type === 'presence') {
       if (client.id && msg.peer.id !== client.id) return
-      client.id = msg.peer.id
-      client.email = msg.peer.email?.trim().toLowerCase() || client.email
-      client.peer = { ...msg.peer, updatedAt: Date.now() }
+      const peer = normalizeActorPresence({ ...msg.peer, updatedAt: Date.now() })
+      // Socket clients are humans only in Phase 0 — reject NPC-shaped presence from sockets.
+      if (!isUserPresence(peer)) return
+      client.id = peer.id
+      client.email = peer.email.trim().toLowerCase() || client.email
+      client.peer = peer
       maybeSavePose(client)
       broadcast({ type: 'presence', peer: client.peer }, ws)
       clearEmptyRooms()
@@ -445,7 +449,7 @@ wss.on('connection', (ws) => {
         send(ws, { type: 'error', message: 'must be inside the room to pin/unpin' })
         return
       }
-      const byName = client.peer.look?.displayName || client.email || client.id
+      const byName = actorLabel(client.peer)
       if (!msg.message) {
         pinnedByRoom.delete(roomId)
         const out = {
@@ -499,7 +503,7 @@ wss.on('connection', (ws) => {
         send(ws, { type: 'error', message: 'must be inside the room to lock/unlock' })
         return
       }
-      const byName = client.peer.look?.displayName || client.email || client.id
+      const byName = actorLabel(client.peer)
       if (msg.locked) {
         lockedRooms.set(roomId, { byId: client.id, byName })
       } else {

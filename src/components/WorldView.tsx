@@ -3,7 +3,7 @@ import { nanoid } from 'nanoid'
 import { useAppStore } from '../store'
 import { TILE, canTraverse, generateWorld, isAtWaterEdge, isUnlimited, nearestWaterCastTarget, pixelCenter, roomAt } from '../world/terrain'
 import { CampusScene } from '../world/CampusScene'
-import { HEARTBEAT_MS, MOVE_SEND_MS, PresenceBus, makePresence } from '../presence/bus'
+import { HEARTBEAT_MS, MOVE_SEND_MS, PresenceBus, makeUserPresence } from '../presence/bus'
 import { OfficeSocket } from '../net/OfficeSocket'
 import { RoomMedia } from '../media/RoomMedia'
 import { VoiceLevelMonitor } from '../media/VoiceLevelMonitor'
@@ -16,7 +16,7 @@ import { GlobalChatBus } from '../chat/GlobalChat'
 import { FLOAT_EMOJIS, RoomActivityBus, type Poll } from '../chat/RoomActivity'
 import type { ChatMessage, DmMessage, PinnedMessage } from '../chat/types'
 import type { Facing } from '../types'
-import { canFlyOverWater, normalizeAnimalKind } from '../types'
+import { actorLabel, canFlyOverWater, isUserPresence, normalizeAnimalKind } from '../types'
 import { ChatPanel } from './ChatPanel'
 import { DmPanel } from './DmPanel'
 import { DmChatBus } from '../chat/DmChat'
@@ -265,7 +265,7 @@ export function WorldView() {
     if (!bus) return
     const room = roomAt(map, pos.current.x, pos.current.y)
     bus.publish(
-      makePresence(
+      makeUserPresence(
         session.id,
         session.email,
         session.look,
@@ -1301,11 +1301,11 @@ export function WorldView() {
     ...(selfRoster(false) ? [selfRoster(false)!] : []),
     ...peersLive.map((p) => ({
       id: p.id,
-      name: p.look.displayName || p.email,
+      name: actorLabel(p),
       roomLabel: roomLabelFor(p.roomId),
       voiceOn: p.voiceOn,
       sharing: p.sharing,
-      dmUnread: dmChatRef.current?.getUnread(p.id) ?? 0,
+      dmUnread: isUserPresence(p) ? (dmChatRef.current?.getUnread(p.id) ?? 0) : 0,
       speakingLevel: speakingLevels[p.id] ?? 0,
     })),
   ]
@@ -1318,7 +1318,7 @@ export function WorldView() {
           .filter((p) => p.roomId === roomId)
           .map((p) => ({
             id: p.id,
-            name: p.look.displayName || p.email,
+            name: actorLabel(p),
             roomLabel: roomName,
             voiceOn: p.voiceOn,
             sharing: p.sharing,
@@ -1453,6 +1453,8 @@ export function WorldView() {
               onClose={() => setRoster(null)}
               anchorRef={onlineBtnRef}
               onStartDm={(person) => {
+                const peer = peersLive.find((p) => p.id === person.id)
+                if (peer && !isUserPresence(peer)) return
                 dmChatRef.current?.open(person.id, person.name)
                 setRoster(null)
               }}

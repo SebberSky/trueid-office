@@ -1,5 +1,6 @@
 import type { WebSocket } from 'ws'
-import type { PeerPresence } from '../src/types'
+import type { ActorPresence } from '../src/types'
+import { actorLabel } from '../src/types'
 import type { ServerMsg } from '../shared/protocol'
 import {
   XO_ROOM_ID,
@@ -16,7 +17,7 @@ type Client = {
   ws: WebSocket
   id: string | null
   email: string | null
-  peer: PeerPresence | null
+  peer: ActorPresence | null
 }
 
 type Deps = {
@@ -40,7 +41,8 @@ let endReason: 'win' | 'draw' | 'forfeit' | null = null
 const boothJoinedAt = new Map<string, number>()
 
 function nameOf(c: Client) {
-  return c.peer?.look?.displayName || c.email || c.id || '?'
+  if (c.peer) return actorLabel(c.peer)
+  return c.email || c.id || '?'
 }
 
 function inBooth(deps: Deps): Client[] {
