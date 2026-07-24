@@ -4,10 +4,10 @@ import { MAP_H, MAP_W, TILE, isWaterAt, roomAt, roomDoor, tileAt } from './terra
 import { TERRAIN_HEIGHT, TERRAIN_HEX, surfaceY, toWorldXZ } from './heights'
 import { Character3D } from '../character/Character3D'
 import type { CharacterLook, Facing, PeerPresence, RoomDef } from '../types'
-import { canFlyOverWater } from '../types'
+import { canFlyOverWater, normalizeAnimalKind } from '../types'
 import { FALLGUYS_ROOM_ID } from '../fallguys/types'
 import { XO_ROOM_ID } from '../xo/types'
-import { playMetallicClang, playPoisonSpit, playGodzillaBite, playDragonFire } from '../media/sfx'
+import { playMetallicClang, playPoisonSpit, playGodzillaBite, playDragonFire, playDogBark, playCatMeow, setSfxListener } from '../media/sfx'
 
 /** 1 = max zoom in (character). Min zoom stays mid-range — no full-map pullback. */
 const ZOOM_DEFAULT = 0.42
@@ -30,6 +30,7 @@ type PeerMotion = {
   lastSpitAt: number
   lastBiteAt: number
   lastSlapAt: number
+  lastCryAt: number
 }
 
 type FishingRig = {
@@ -753,7 +754,7 @@ export class CampusScene {
   /** Dragon fire breath (E) — VFX + burn anyone in the forward cone. */
   breathFire() {
     this.player.triggerFireBreath()
-    playDragonFire()
+    playDragonFire(this.lastLocalPos.x, this.lastLocalPos.y)
     this.applyFireCone(
       this.player,
       this.lastLocalPos.x,
@@ -765,7 +766,7 @@ export class CampusScene {
   /** Snake poison spit (E) — cyan streams ~3 tiles + poison anyone in the spray. */
   spitPoison() {
     this.player.triggerPoisonSpit()
-    playPoisonSpit()
+    playPoisonSpit(this.lastLocalPos.x, this.lastLocalPos.y)
     this.applyPoisonSpray(
       this.player,
       this.lastLocalPos.x,
@@ -777,7 +778,7 @@ export class CampusScene {
   /** Godzilla bite (E) — VFX + blood-stain anyone directly in front. */
   bite() {
     this.player.triggerBite()
-    playGodzillaBite()
+    playGodzillaBite(this.lastLocalPos.x, this.lastLocalPos.y)
     this.applyBiteFront(
       this.player,
       this.lastLocalPos.x,
@@ -795,7 +796,13 @@ export class CampusScene {
       this.lastLocalPos.y,
       this.lastLocalPos.facing,
     )
-    if (hit) playMetallicClang()
+    if (hit) playMetallicClang(this.lastLocalPos.x, this.lastLocalPos.y)
+  }
+
+  /** Cat meow / dog bark (E) — sound only. */
+  petCry(kind: 'cat' | 'dog') {
+    if (kind === 'dog') playDogBark(this.lastLocalPos.x, this.lastLocalPos.y)
+    else playCatMeow(this.lastLocalPos.x, this.lastLocalPos.y)
   }
 
   /** Char avatars standing in front of a dragon's breath. */
@@ -1014,6 +1021,7 @@ export class CampusScene {
   }
 
   syncPeers(peers: PeerPresence[], map: WorldMap, dt = 0) {
+    setSfxListener(this.lastLocalPos.x, this.lastLocalPos.y)
     const seen = new Set<string>()
     for (const p of peers) {
       seen.add(p.id)
@@ -1034,6 +1042,7 @@ export class CampusScene {
           lastSpitAt: p.spitAt ?? 0,
           lastBiteAt: p.biteAt ?? 0,
           lastSlapAt: p.slapAt ?? 0,
+          lastCryAt: p.cryAt ?? 0,
         }
         this.peerMotion.set(p.id, motion)
       }
@@ -1050,27 +1059,33 @@ export class CampusScene {
       if (p.fireAt && p.fireAt !== motion.lastFireAt) {
         motion.lastFireAt = p.fireAt
         avatar.triggerFireBreath()
-        playDragonFire()
+        playDragonFire(motion.x, motion.y)
         this.applyFireCone(avatar, motion.x, motion.y, motion.facing)
       }
       if (p.spitAt && p.spitAt !== motion.lastSpitAt) {
         motion.lastSpitAt = p.spitAt
         avatar.triggerPoisonSpit()
-        playPoisonSpit()
+        playPoisonSpit(motion.x, motion.y)
         this.applyPoisonSpray(avatar, motion.x, motion.y, motion.facing)
       }
       if (p.biteAt && p.biteAt !== motion.lastBiteAt) {
         motion.lastBiteAt = p.biteAt
         avatar.triggerBite()
-        playGodzillaBite()
+        playGodzillaBite(motion.x, motion.y)
         this.applyBiteFront(avatar, motion.x, motion.y, motion.facing)
       }
       if (p.slapAt && p.slapAt !== motion.lastSlapAt) {
         motion.lastSlapAt = p.slapAt
         avatar.triggerTraySlap()
         if (this.applySlapFront(avatar, motion.x, motion.y, motion.facing)) {
-          playMetallicClang()
+          playMetallicClang(motion.x, motion.y)
         }
+      }
+      if (p.cryAt && p.cryAt !== motion.lastCryAt) {
+        motion.lastCryAt = p.cryAt
+        const kind = normalizeAnimalKind(p.look.animalKind)
+        if (kind === 'dog') playDogBark(motion.x, motion.y)
+        else if (kind === 'cat') playCatMeow(motion.x, motion.y)
       }
 
       // Peer fishing rod / line — show while casting, hide on catch / stop
@@ -1143,6 +1158,7 @@ export class CampusScene {
   ) {
     this.clock += dt
     this.lastLocalPos = { x: px, y: py, facing }
+    setSfxListener(px, py)
 
     const { x, z } = toWorldXZ(px, py)
     const y = surfaceY(map, px, py)

@@ -1,3 +1,5 @@
+import { TILE } from '../world/terrain'
+
 /** Lightweight one-shot SFX — each clip finishes before it can play again. */
 
 const active = new Map<string, HTMLAudioElement>()
@@ -7,12 +9,23 @@ const PUBLIC_CHAT_MUTE_KEY = 'trueid-office-public-chat-alert-muted'
 const PUBLIC_CHAT_VOLUME = 0.28
 /** Private DM alerts — louder so they stand out. */
 const DM_CHAT_VOLUME = 0.78
+/** World combat / pet cries — hear only within this many tiles of the source. */
+export const SFX_HEAR_TILES = 5
+
+let listenerX = 0
+let listenerY = 0
+
+/** Local player position in map pixels — call each frame / before world SFX. */
+export function setSfxListener(px: number, py: number) {
+  listenerX = px
+  listenerY = py
+}
 
 function play(src: string, volume = 0.75, lockKey = src) {
   if (active.has(lockKey)) return
   try {
     const audio = new Audio(src)
-    audio.volume = volume
+    audio.volume = Math.max(0, Math.min(1, volume))
     const clear = () => {
       if (active.get(lockKey) === audio) active.delete(lockKey)
     }
@@ -25,6 +38,13 @@ function play(src: string, volume = 0.75, lockKey = src) {
   } catch {
     active.delete(lockKey)
   }
+}
+
+/** Play only if the listener is within {@link SFX_HEAR_TILES} of the source (pixel coords). */
+function playWorld(src: string, baseVolume: number, sourcePx: number, sourcePy: number, lockKey = src) {
+  const distTiles = Math.hypot(sourcePx - listenerX, sourcePy - listenerY) / TILE
+  if (distTiles > SFX_HEAR_TILES) return
+  play(src, baseVolume, lockKey)
 }
 
 function readPublicChatMuted(): boolean {
@@ -50,20 +70,28 @@ export function setPublicChatAlertMuted(muted: boolean) {
   }
 }
 
-export function playMetallicClang() {
-  play('/sounds/metallic-clang.mp3', 0.28)
+export function playMetallicClang(sourcePx: number, sourcePy: number) {
+  playWorld('/sounds/metallic-clang.mp3', 0.28, sourcePx, sourcePy)
 }
 
-export function playPoisonSpit() {
-  play('/sounds/poison-spit.mp3', 0.22)
+export function playPoisonSpit(sourcePx: number, sourcePy: number) {
+  playWorld('/sounds/poison-spit.mp3', 0.22, sourcePx, sourcePy)
 }
 
-export function playGodzillaBite() {
-  play('/sounds/godzilla-bite.mp3', 0.3)
+export function playGodzillaBite(sourcePx: number, sourcePy: number) {
+  playWorld('/sounds/godzilla-bite.mp3', 0.3, sourcePx, sourcePy)
 }
 
-export function playDragonFire() {
-  play('/sounds/dragon-fire.mp3', 0.26)
+export function playDragonFire(sourcePx: number, sourcePy: number) {
+  playWorld('/sounds/dragon-fire.mp3', 0.26, sourcePx, sourcePy)
+}
+
+export function playDogBark(sourcePx: number, sourcePy: number) {
+  playWorld('/sounds/dog-bark.mp3', 0.32, sourcePx, sourcePy)
+}
+
+export function playCatMeow(sourcePx: number, sourcePy: number) {
+  playWorld('/sounds/cat-meow.mp3', 0.32, sourcePx, sourcePy)
 }
 
 /** Incoming global or room chat (quieter; respects mute). */

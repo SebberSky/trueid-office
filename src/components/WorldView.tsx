@@ -256,6 +256,7 @@ export function WorldView() {
   const spitAtRef = useRef(0)
   const biteAtRef = useRef(0)
   const slapAtRef = useRef(0)
+  const cryAtRef = useRef(0)
   const crouchingRef = useRef(false)
   const fishCastRef = useRef<{ x: number; y: number } | null>(null)
 
@@ -281,6 +282,7 @@ export function WorldView() {
         fishCastRef.current,
         spitAtRef.current || undefined,
         slapAtRef.current || undefined,
+        cryAtRef.current || undefined,
       ),
     )
   }, [map, session, voiceOn, sharing])
@@ -729,6 +731,10 @@ export function WorldView() {
         } else if (kind === 'snake') {
           sceneRef.current?.spitPoison()
           spitAtRef.current = Date.now()
+          publishRef.current()
+        } else if (kind === 'dog' || kind === 'cat') {
+          sceneRef.current?.petCry(kind)
+          cryAtRef.current = Date.now()
           publishRef.current()
         }
       }

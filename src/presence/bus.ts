@@ -125,6 +125,7 @@ export function makePresence(
   fishCast?: { x: number; y: number } | null,
   spitAt?: number,
   slapAt?: number,
+  cryAt?: number,
 ): PeerPresence {
   return {
     id,
@@ -141,6 +142,7 @@ export function makePresence(
     spitAt,
     biteAt,
     slapAt,
+    cryAt,
     crouching,
     fishX: fishCast?.x,
     fishY: fishCast?.y,

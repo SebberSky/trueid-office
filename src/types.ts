@@ -127,6 +127,8 @@ export interface PeerPresence {
   biteAt?: number
   /** Timestamp of last human tray slap — remotes replay the VFX when this changes. */
   slapAt?: number
+  /** Timestamp of last cat/dog cry (E) — remotes replay bark/meow when this changes. */
+  cryAt?: number
   /** Holding crouch (Ctrl) — remotes mirror the squat pose. */
   crouching?: boolean
   /** Pond bobber target while fishing; omit when not casting. */
