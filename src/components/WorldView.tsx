@@ -71,6 +71,9 @@ const SPEED = 280
 /** Roster / NPC list refresh rate — decoupled from presence traffic. */
 const PEER_UI_SYNC_MS = 250
 
+/** Temporary: block starting screen share when room occupancy exceeds this. */
+const SCREEN_SHARE_MAX_OCCUPANCY = 10
+
 function mediaErrMessage(err: unknown, fallback: string): string {
   const msg = err instanceof Error ? err.message : ''
   if (msg.startsWith('INSECURE_CONTEXT:')) return msg.slice('INSECURE_CONTEXT:'.length).trim()
@@ -214,6 +217,7 @@ export function WorldView() {
   const toggleVoiceRef = useRef(() => {})
   const [screenFrom, setScreenFrom] = useState<string | null>(null)
   const [mediaError, setMediaError] = useState<string | null>(null)
+  const [shareBlockedOpen, setShareBlockedOpen] = useState(false)
   const [globalMsgs, setGlobalMsgs] = useState<ChatMessage[]>([])
   const [roomMsgs, setRoomMsgs] = useState<ChatMessage[]>([])
   /** When in a room, global chat starts collapsed to one preview line. */
@@ -1480,6 +1484,11 @@ export function WorldView() {
   async function toggleShare() {
     if (!roomId) return
     setMediaError(null)
+    // Temporary: allow share in any room while occupancy ≤ SCREEN_SHARE_MAX_OCCUPANCY
+    if (!sharing && capacity.in > SCREEN_SHARE_MAX_OCCUPANCY) {
+      setShareBlockedOpen(true)
+      return
+    }
     try {
       if (sharing) {
         // Stop only our outbound share; RoomMedia keeps/restores remote shares on the preview.
@@ -1581,6 +1590,10 @@ export function WorldView() {
   useEffect(() => {
     if (!roomId && roster === 'room') setRoster(null)
   }, [roomId, roster])
+
+  useEffect(() => {
+    if (!roomId) setShareBlockedOpen(false)
+  }, [roomId])
 
   useEffect(() => () => stopFishing(), [stopFishing])
 
@@ -1697,6 +1710,26 @@ export function WorldView() {
     <div className="world">
       {serverUpdate && (
         <ServerUpdateBanner inSec={serverUpdate.inSec} at={serverUpdate.at} />
+      )}
+      {shareBlockedOpen && (
+        <div
+          className="world__share-block"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="share-block-title"
+          aria-describedby="share-block-desc"
+        >
+          <div className="world__share-block-card">
+            <h2 id="share-block-title">แชร์จอไม่ได้</h2>
+            <p id="share-block-desc">
+              ห้องนี้มีคนออนไลน์เกิน {SCREEN_SHARE_MAX_OCCUPANCY} คน ({capacity.in} คน)
+              — ลดจำนวนคนในห้องแล้วลองใหม่
+            </p>
+            <button type="button" onClick={() => setShareBlockedOpen(false)}>
+              ตกลง
+            </button>
+          </div>
+        </div>
       )}
       <header className="world__bar">
         <div className="world__brand">
