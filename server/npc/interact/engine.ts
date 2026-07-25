@@ -4,19 +4,23 @@ import { inInteractRange } from '../../../shared/npcInteract'
 import type { NpcRuntime } from '../runtime'
 import type { NpcScript } from '../define'
 import {
-  choiceResponseMode,
+  choiceLabels,
+  choiceMeta,
   nextNodeIdForChoice,
   resolveContentNode,
 } from './dialogue'
-import { resolveNodeReply } from './sources'
+import { isAsyncSource, resolveNodeReply } from './sources'
 import {
   InteractSessionStore,
   newSessionId,
   type InteractSession,
 } from './sessions'
-import type { InteractContext, ResolvedReply } from './types'
+import type { DialogueNode, InteractContext, ResolvedReply } from './types'
 
 export type InteractSend = (msg: ServerMsg) => void
+
+/** Shown when a data-backed node fails and its script sets no fallback line. */
+const FALLBACK_TEXT = 'ตอนนี้ดึงข้อมูลไม่ได้ ลองใหม่อีกทีนะ'
 
 export type InteractEndReason =
   | 'client'
@@ -211,16 +215,54 @@ export class InteractEngine {
       reply = await resolveNodeReply(node, session.context)
     } catch (err) {
       session.busy = false
-      console.error('[interact] reply failed', err)
-      if (this.sessions.getBySession(session.sessionId) === session) {
+      console.error('[interact] reply failed', session.npcKey, node.id, err)
+      if (this.sessions.getBySession(session.sessionId) !== session) return
+
+      // Data sources fail transiently — recover instead of dropping the session.
+      // A scripted node without a fallback is a script bug, so keep ending there.
+      if (!isAsyncSource(node) && !node.onError) {
         this.endSession(session.sessionId, 'error', send)
+        return
       }
+      if (node.onError?.next) {
+        await this.emitNode(session, script, node.onError.next, send, depth + 1)
+        return
+      }
+      this.sendDialogue(
+        session,
+        script,
+        node,
+        {
+          text: node.onError?.text ?? FALLBACK_TEXT,
+          choices: choiceLabels(node),
+          nodeId: node.id,
+          end: false,
+        },
+        send,
+      )
       return
     }
 
     if (this.sessions.getBySession(session.sessionId) !== session) return
 
     session.busy = false
+    this.sendDialogue(session, script, node, reply, send)
+
+    if (!reply.end && reply.choices.length === 0 && node.next) {
+      await this.emitNode(session, script, node.next, send, depth + 1)
+    }
+  }
+
+  private sendDialogue(
+    session: InteractSession,
+    script: NpcScript,
+    node: DialogueNode,
+    reply: ResolvedReply,
+    send: InteractSend,
+  ): void {
+    const config = script.interact
+    if (!config) return
+
     session.nodeId = reply.nodeId
     this.sessions.touch(session.sessionId)
 
@@ -231,14 +273,10 @@ export class InteractEngine {
       text: reply.text,
       choices: reply.choices.map((choice) => ({
         ...choice,
-        responseMode: choiceResponseMode(script.interact!, node, choice.id),
+        ...choiceMeta(config, node, choice.id),
       })),
       nodeId: reply.nodeId,
     })
-
-    if (!reply.end && reply.choices.length === 0 && node.next) {
-      await this.emitNode(session, script, node.next, send, depth + 1)
-    }
   }
 }
 

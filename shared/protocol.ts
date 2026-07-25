@@ -127,6 +127,8 @@ export type ServerMsg =
         label: string
         /** How the destination node resolves after this choice is selected. */
         responseMode?: 'immediate' | 'async'
+        /** Spinner caption while an `async` choice resolves. */
+        loadingLabel?: string
       }[]
       nodeId?: string
     }

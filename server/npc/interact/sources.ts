@@ -3,6 +3,8 @@ import {
   choiceLabels,
   contextVars,
 } from './dialogue'
+import { fetchSheetVars } from './googleSheet'
+import { fetchHttpApiVars } from './httpApi'
 import type {
   DialogueNode,
   InteractContext,
@@ -25,14 +27,34 @@ export const scriptedReplySource: ReplySource = {
   },
 }
 
+/** One fetcher per provider — new data sources register here. */
+const API_PROVIDERS = {
+  'google-sheet': fetchSheetVars,
+  http: fetchHttpApiVars,
+} as const
+
 /**
- * Phase 3 stub — Google Sheet / HTTP providers plug in here.
- * Never called in Phase 2; kept so scripts can declare `source: { type: 'api' }`.
+ * Live data replies. Fetched vars fill the node's `say` template, so a script
+ * controls presentation and the provider only supplies text.
  */
-export const apiReplySourceStub: ReplySource = {
+export const apiReplySource: ReplySource = {
   type: 'api',
-  resolve(node, context, vars) {
-    return scriptedReplySource.resolve(node, context, vars)
+  async resolve(node, context, vars) {
+    const source = node.source
+    if (source?.type !== 'api') {
+      return scriptedReplySource.resolve(node, context, vars)
+    }
+    const dataVars =
+      source.provider === 'google-sheet'
+        ? await API_PROVIDERS['google-sheet'](source.config)
+        : await API_PROVIDERS.http(source.config)
+    const merged = { ...contextVars(context), ...dataVars, ...vars }
+    return {
+      text: applyTemplate(node.say ?? '', merged),
+      choices: choiceLabels(node),
+      nodeId: node.id,
+      end: !!node.end || (!node.choices?.length && !node.next),
+    }
   },
 }
 
@@ -46,15 +68,20 @@ export const llmReplySourceStub: ReplySource = {
 
 const SOURCES: Record<ReplySourceRef['type'], ReplySource> = {
   scripted: scriptedReplySource,
-  api: apiReplySourceStub,
+  api: apiReplySource,
   llm: llmReplySourceStub,
 }
 
 export function replySourceFor(node: DialogueNode): ReplySource {
   const type = node.source?.type ?? 'scripted'
-  // Phase 2: force scripted execution even if a node declares api/llm.
-  if (type !== 'scripted') return scriptedReplySource
+  // `llm` has no provider yet — fall back to the scripted line.
+  if (type === 'llm') return scriptedReplySource
   return SOURCES[type] ?? scriptedReplySource
+}
+
+/** True when a node's reply can block on network I/O. */
+export function isAsyncSource(node: DialogueNode): boolean {
+  return node.source?.type === 'api'
 }
 
 export async function resolveNodeReply(

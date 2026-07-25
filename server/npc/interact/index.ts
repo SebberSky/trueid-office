@@ -1,5 +1,6 @@
 export type {
   DialogueChoice,
+  DialogueErrorFallback,
   DialogueNode,
   InteractConfig,
   InteractContext,
@@ -7,7 +8,34 @@ export type {
   ReplySourceRef,
   ResolvedReply,
 } from './types'
-export { applyTemplate, contextVars, resolveContentNode, choiceLabels, nextNodeIdForChoice } from './dialogue'
-export { scriptedReplySource, apiReplySourceStub, llmReplySourceStub, resolveNodeReply } from './sources'
+export type { GoogleSheetSourceConfig, SheetTable } from './googleSheet'
+export type { ApiRequestConfig, FetchLike, RequestOptions } from './http'
+export type { HttpApiSourceConfig } from './httpApi'
+export { ApiRequestError, requestCached, requestText, resetApiCache } from './http'
+export { fetchHttpApiVars, getPath, httpApiVars } from './httpApi'
+export {
+  applyTemplate,
+  choiceMeta,
+  choiceResponseMode,
+  contextVars,
+  resolveContentNode,
+  choiceLabels,
+  nextNodeIdForChoice,
+} from './dialogue'
+export {
+  fetchSheetVars,
+  loadSheetTable,
+  parseCsv,
+  resetSheetCache,
+  sheetVars,
+  toTable,
+} from './googleSheet'
+export {
+  scriptedReplySource,
+  apiReplySource,
+  isAsyncSource,
+  llmReplySourceStub,
+  resolveNodeReply,
+} from './sources'
 export { InteractSessionStore, newSessionId } from './sessions'
 export { InteractEngine } from './engine'

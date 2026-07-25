@@ -190,7 +190,12 @@ export function WorldView() {
     npcId: string
     npcName: string
     text: string
-    choices: { id: string; label: string; responseMode?: 'immediate' | 'async' }[]
+    choices: {
+      id: string
+      label: string
+      responseMode?: 'immediate' | 'async'
+      loadingLabel?: string
+    }[]
     streaming: boolean
     pendingChoiceId: string | null
   }

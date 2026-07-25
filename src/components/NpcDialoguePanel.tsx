@@ -5,7 +5,10 @@ export type NpcDialogueChoice = {
   id: string
   label: string
   responseMode?: 'immediate' | 'async'
+  loadingLabel?: string
 }
+
+const DEFAULT_LOADING_LABEL = 'กำลังตอบ…'
 
 type Props = {
   open: boolean
@@ -65,7 +68,9 @@ export function NpcDialoguePanel({
                   <span className="npc-dialogue__idx">{index + 1}.</span>
                   {choice.label}
                   {pendingChoiceId === choice.id ? (
-                    <span className="npc-dialogue__choice-loading">กำลังตอบ…</span>
+                    <span className="npc-dialogue__choice-loading">
+                      {choice.loadingLabel ?? DEFAULT_LOADING_LABEL}
+                    </span>
                   ) : null}
                 </button>
               </li>
