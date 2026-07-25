@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import type { WorldMap } from './terrain'
-import { MAP_H, MAP_W, TILE, isWaterAt, roomAt, roomDoor, tileAt } from './terrain'
+import { MAP_H, MAP_W, TILE, isWaterAt, roomAt, roomDoor } from './terrain'
 import { TERRAIN_HEIGHT, TERRAIN_HEX, surfaceY, toWorldXZ } from './heights'
 import { Character3D } from '../character/Character3D'
 import type { CharacterLook, Facing, ActorPresence, RoomDef } from '../types'
@@ -18,6 +18,8 @@ const ROOM_ROOF_Y = 2.68
 const PEER_CATCHUP = 340
 /** Snap instead of sliding when the gap is clearly a teleport / first join. */
 const PEER_SNAP_DIST = 200
+/** NPC avatars beyond this radius (in px) are not instantiated — well past camera range. */
+const NPC_CULL_DIST_SQ = (48 * TILE) ** 2
 
 type PeerMotion = {
   x: number
@@ -1024,6 +1026,12 @@ export class CampusScene {
     setSfxListener(this.lastLocalPos.x, this.lastLocalPos.y)
     const seen = new Set<string>()
     for (const p of peers) {
+      // Atmosphere NPCs can be numerous; only keep avatars the camera can reach.
+      if (p.kind === 'npc') {
+        const dxCull = p.x - this.lastLocalPos.x
+        const dyCull = p.y - this.lastLocalPos.y
+        if (dxCull * dxCull + dyCull * dyCull > NPC_CULL_DIST_SQ) continue
+      }
       seen.add(p.id)
       let avatar = this.peers.get(p.id)
       let motion = this.peerMotion.get(p.id)

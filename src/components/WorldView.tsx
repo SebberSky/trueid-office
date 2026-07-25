@@ -3,6 +3,7 @@ import { nanoid } from 'nanoid'
 import { useAppStore } from '../store'
 import { TILE, canTraverse, generateWorld, isAtWaterEdge, isUnlimited, nearestWaterCastTarget, pixelCenter, roomAt } from '../world/terrain'
 import { CampusScene } from '../world/CampusScene'
+import { findAdjacentWarpDestination } from '../world/warp'
 import { HEARTBEAT_MS, MOVE_SEND_MS, PresenceBus, makeUserPresence } from '../presence/bus'
 import { OfficeSocket } from '../net/OfficeSocket'
 import { RoomMedia } from '../media/RoomMedia'
@@ -15,8 +16,14 @@ import { downloadRecording, ScreenRecorder } from '../media/ScreenRecorder'
 import { GlobalChatBus } from '../chat/GlobalChat'
 import { FLOAT_EMOJIS, RoomActivityBus, type Poll } from '../chat/RoomActivity'
 import type { ChatMessage, DmMessage, PinnedMessage } from '../chat/types'
-import type { Facing } from '../types'
-import { actorLabel, canFlyOverWater, isUserPresence, normalizeAnimalKind } from '../types'
+import type { Facing, NpcPresence } from '../types'
+import {
+  actorLabel,
+  canFlyOverWater,
+  isNpcPresence,
+  isUserPresence,
+  normalizeAnimalKind,
+} from '../types'
 import { ChatPanel } from './ChatPanel'
 import { DmPanel } from './DmPanel'
 import { DmChatBus } from '../chat/DmChat'
@@ -24,6 +31,7 @@ import { NameWheel } from './NameWheel'
 import { PollPanel } from './PollPanel'
 import { FloatingEmojis, type FloatEmojiItem } from './FloatingEmojis'
 import { OnlineRoster, type RosterPerson } from './OnlineRoster'
+import { NpcPanel } from './NpcPanel'
 import { ServerUpdateBanner } from './ServerUpdateBanner'
 import { FishingCatchOverlay } from './FishingCatch'
 import { FallGuysGame } from './FallGuysGame'
@@ -52,6 +60,8 @@ import {
 import './World.css'
 
 const SPEED = 280
+/** Roster / NPC list refresh rate — decoupled from presence traffic. */
+const PEER_UI_SYNC_MS = 250
 
 function mediaErrMessage(err: unknown, fallback: string): string {
   const msg = err instanceof Error ? err.message : ''
@@ -97,6 +107,7 @@ export function WorldView() {
   const keys = useRef(new Set<string>())
   const stickRef = useRef({ x: 0, y: 0 })
   const peersRef = useRef<ReturnType<PresenceBus['getPeers']>>([])
+  const peerUiTimerRef = useRef(0)
   const busRef = useRef<PresenceBus | null>(null)
   const mediaRef = useRef<RoomMedia | null>(null)
   const remoteStreamsRef = useRef(new Map<string, MediaStream>())
@@ -127,9 +138,10 @@ export function WorldView() {
   const [peerCount, setPeerCount] = useState(0)
   const [peersLive, setPeersLive] = useState<ReturnType<PresenceBus['getPeers']>>([])
   const [speakingLevels, setSpeakingLevels] = useState<Record<string, number>>({})
-  const [roster, setRoster] = useState<'server' | 'room' | null>(null)
+  const [roster, setRoster] = useState<'server' | 'room' | 'npc' | null>(null)
   const onlineBtnRef = useRef<HTMLButtonElement>(null)
   const roomBtnRef = useRef<HTMLButtonElement>(null)
+  const npcBtnRef = useRef<HTMLButtonElement>(null)
   const [fishCatch, setFishCatch] = useState<FishingCatch | null>(null)
   const [nearWater, setNearWater] = useState(false)
   const [fishingActive, setFishingActive] = useState(false)
@@ -403,10 +415,17 @@ export function WorldView() {
       look: session.look,
     })
     busRef.current = bus
+    // The render loop reads peersRef every frame, so React state only needs to
+    // refresh at UI cadence — otherwise every NPC tick re-renders the world.
     const unsub = bus.subscribe(() => {
       peersRef.current = bus.getPeers()
-      setPeerCount(peersRef.current.length)
-      setPeersLive(peersRef.current)
+      if (peerUiTimerRef.current) return
+      peerUiTimerRef.current = window.setTimeout(() => {
+        peerUiTimerRef.current = 0
+        const peers = peersRef.current
+        setPeerCount(peers.filter(isUserPresence).length)
+        setPeersLive(peers)
+      }, PEER_UI_SYNC_MS)
     })
 
     const unsubLock = net.subscribe((msg) => {
@@ -655,6 +674,10 @@ export function WorldView() {
       window.removeEventListener('keydown', resumeAudio)
       resumeAudioRef.current = null
       onLeave()
+      if (peerUiTimerRef.current) {
+        clearTimeout(peerUiTimerRef.current)
+        peerUiTimerRef.current = 0
+      }
       unsub()
       unsubLock()
       unsubChat()
@@ -788,7 +811,9 @@ export function WorldView() {
     resumeAudioRef.current?.()
     const room = roomAt(map, pos.current.x, pos.current.y)
     if (!room || !mediaRef.current) return
-    const peerIds = peersRef.current.filter((p) => p.roomId === room.id).map((p) => p.id)
+    const peerIds = peersRef.current
+      .filter((p) => isUserPresence(p) && p.roomId === room.id)
+      .map((p) => p.id)
     void mediaRef.current.refreshConnections(peerIds, true)
   }, [worldActive, map])
 
@@ -870,7 +895,9 @@ export function WorldView() {
         if (lockedRoomsRef.current.has(nextRoom.id)) return
         // XO is an open plaza pad but still hard-caps at 2 players
         if (!isUnlimited(nextRoom) || nextRoom.id === XO_ROOM_ID) {
-          const others = peersRef.current.filter((p) => p.roomId === nextRoom.id).length
+          const others = peersRef.current.filter(
+            (p) => isUserPresence(p) && p.roomId === nextRoom.id,
+          ).length
           if (others + 1 > nextRoom.capacity) return
         }
       }
@@ -884,7 +911,9 @@ export function WorldView() {
     const maintainMedia = (now: number) => {
       const room = roomAt(map, pos.current.x, pos.current.y)
       const peers = peersRef.current
-      const inRoomPeers = peers.filter((p) => p.roomId && room && p.roomId === room.id)
+      const inRoomPeers = peers.filter(
+        (p) => isUserPresence(p) && p.roomId && room && p.roomId === room.id,
+      )
       const occupants = inRoomPeers.length + (room ? 1 : 0)
       const nextRoomName = room?.name ?? null
       const nextRoomId = room?.id ?? null
@@ -1299,23 +1328,24 @@ export function WorldView() {
 
   const serverPeople: RosterPerson[] = [
     ...(selfRoster(false) ? [selfRoster(false)!] : []),
-    ...peersLive.map((p) => ({
-      id: p.id,
-      name: actorLabel(p),
-      roomLabel: roomLabelFor(p.roomId),
-      voiceOn: p.voiceOn,
-      sharing: p.sharing,
-      dmUnread: isUserPresence(p) ? (dmChatRef.current?.getUnread(p.id) ?? 0) : 0,
-      speakingLevel: speakingLevels[p.id] ?? 0,
-    })),
+    ...peersLive.filter(isUserPresence).map((p) => ({
+        id: p.id,
+        name: actorLabel(p),
+        roomLabel: roomLabelFor(p.roomId),
+        voiceOn: p.voiceOn,
+        sharing: p.sharing,
+        dmUnread: dmChatRef.current?.getUnread(p.id) ?? 0,
+        speakingLevel: speakingLevels[p.id] ?? 0,
+      })),
   ]
+  const liveNpcs = peersLive.filter(isNpcPresence)
   void dmUnreadTick // re-render when unread changes
 
   const roomPeople: RosterPerson[] = roomId
     ? [
         ...(selfRoster(true) ? [selfRoster(true)!] : []),
         ...peersLive
-          .filter((p) => p.roomId === roomId)
+          .filter((p) => isUserPresence(p) && p.roomId === roomId)
           .map((p) => ({
             id: p.id,
             name: actorLabel(p),
@@ -1331,18 +1361,22 @@ export function WorldView() {
 
   // Live zone occupancy from presence (matches who is standing on the pad)
   const fgZoneCount =
-    peersLive.filter((p) => p.roomId === FALLGUYS_ROOM_ID).length +
+    peersLive.filter((p) => isUserPresence(p) && p.roomId === FALLGUYS_ROOM_ID).length +
     (roomId === FALLGUYS_ROOM_ID ? 1 : 0)
   const xoZoneCount =
-    peersLive.filter((p) => p.roomId === XO_ROOM_ID).length +
+    peersLive.filter((p) => isUserPresence(p) && p.roomId === XO_ROOM_ID).length +
     (roomId === XO_ROOM_ID ? 1 : 0)
   const xoZoneIds = [
     ...(roomId === XO_ROOM_ID ? [session.id] : []),
-    ...peersLive.filter((p) => p.roomId === XO_ROOM_ID).map((p) => p.id),
+    ...peersLive
+      .filter((p) => isUserPresence(p) && p.roomId === XO_ROOM_ID)
+      .map((p) => p.id),
   ]
   const fgZoneIds = [
     ...(roomId === FALLGUYS_ROOM_ID ? [session.id] : []),
-    ...peersLive.filter((p) => p.roomId === FALLGUYS_ROOM_ID).map((p) => p.id),
+    ...peersLive
+      .filter((p) => isUserPresence(p) && p.roomId === FALLGUYS_ROOM_ID)
+      .map((p) => p.id),
   ]
 
   useEffect(() => {
@@ -1356,58 +1390,16 @@ export function WorldView() {
 
       const peer = peersRef.current.find((p) => p.id === person.id)
       if (!peer) return
+      if (isNpcPresence(peer) && !peer.warpEnabled) return
 
-      const canFly = canFlyOverWater(lookRef.current)
-      const radius = 8
-      const offsets: [number, number][] = [
-        [0, TILE * 0.9],
-        [0, -TILE * 0.9],
-        [TILE * 0.9, 0],
-        [-TILE * 0.9, 0],
-        [TILE * 0.65, TILE * 0.65],
-        [-TILE * 0.65, TILE * 0.65],
-        [TILE * 0.65, -TILE * 0.65],
-        [-TILE * 0.65, -TILE * 0.65],
-        [0, TILE * 1.4],
-        [0, -TILE * 1.4],
-        [TILE * 1.4, 0],
-        [-TILE * 1.4, 0],
-      ]
-
-      const canStandAt = (x: number, y: number) => {
-        const samples = [
-          [x, y],
-          [x - radius, y],
-          [x + radius, y],
-          [x, y - radius],
-          [x, y + radius],
-        ]
-        for (const [sx, sy] of samples) {
-          const tx = Math.floor(sx / TILE)
-          const ty = Math.floor(sy / TILE)
-          if (!canTraverse(map, tx, ty, canFly)) return false
-        }
-        const prevRoom = roomAt(map, pos.current.x, pos.current.y)
-        const nextRoom = roomAt(map, x, y)
-        if (nextRoom && (!prevRoom || prevRoom.id !== nextRoom.id)) {
-          if (lockedRoomsRef.current.has(nextRoom.id)) return false
-          if (!isUnlimited(nextRoom) || nextRoom.id === XO_ROOM_ID) {
-            const others = peersRef.current.filter((p) => p.roomId === nextRoom.id).length
-            if (others + 1 > nextRoom.capacity) return false
-          }
-        }
-        return true
-      }
-
-      let dest: { x: number; y: number } | null = null
-      for (const [ox, oy] of offsets) {
-        const x = peer.x + ox
-        const y = peer.y + oy
-        if (canStandAt(x, y)) {
-          dest = { x, y }
-          break
-        }
-      }
+      const dest = findAdjacentWarpDestination({
+        map,
+        target: peer,
+        current: pos.current,
+        peers: peersRef.current,
+        lockedRoomIds: lockedRoomsRef.current,
+        canFly: canFlyOverWater(lookRef.current),
+      })
       if (!dest) return
 
       if (fishingActiveRef.current) stopFishingRef.current()
@@ -1461,6 +1453,26 @@ export function WorldView() {
               onWarp={warpToPeer}
             />
           </div>
+          <div className="world__meta-item">
+            <button
+              type="button"
+              ref={npcBtnRef}
+              className={roster === 'npc' ? 'world__npc-btn is-open' : 'world__npc-btn'}
+              onClick={() => setRoster((value) => (value === 'npc' ? null : 'npc'))}
+              title="รายชื่อ NPC ในแผนที่"
+            >
+              NPC {liveNpcs.length}
+            </button>
+            <NpcPanel
+              open={roster === 'npc'}
+              npcs={liveNpcs}
+              onClose={() => setRoster(null)}
+              anchorRef={npcBtnRef}
+              onWarp={(npc: NpcPresence) =>
+                warpToPeer({ id: npc.id, name: actorLabel(npc) })
+              }
+            />
+          </div>
           {roomName ? (
             <div className="world__meta-item">
               <button
@@ -1491,7 +1503,7 @@ export function WorldView() {
           <button type="button" onClick={goCreator}>
             แก้ไขตัวละคร
           </button>
-          <button type="button" className="danger" onClick={logout}>
+          <button type="button" className="danger" onClick={() => logout()}>
             ออก
           </button>
         </div>
@@ -1499,7 +1511,7 @@ export function WorldView() {
 
       <div className="world__stage" ref={wrapRef}>
         <canvas ref={canvasRef} tabIndex={0} />
-        <Minimap map={map} sceneRef={sceneRef} playerRef={pos} />
+        <Minimap map={map} sceneRef={sceneRef} playerRef={pos} peersRef={peersRef} />
         <FloatingEmojis
           items={floatEmojis}
           getAnchor={(fromId) => {

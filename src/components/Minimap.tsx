@@ -2,7 +2,8 @@ import { useEffect, useRef } from 'react'
 import type { RefObject } from 'react'
 import type { CampusScene } from '../world/CampusScene'
 import type { WorldMap } from '../world/terrain'
-import { MAP_H, MAP_W, TERRAIN_COLOR } from '../world/terrain'
+import type { ActorPresence } from '../types'
+import { MAP_H, MAP_W, TERRAIN_COLOR, TILE } from '../world/terrain'
 import './Minimap.css'
 
 const MM_W = 168
@@ -12,9 +13,10 @@ type Props = {
   map: WorldMap
   sceneRef: RefObject<CampusScene | null>
   playerRef: RefObject<{ x: number; y: number }>
+  peersRef: RefObject<ActorPresence[]>
 }
 
-export function Minimap({ map, sceneRef, playerRef }: Props) {
+export function Minimap({ map, sceneRef, playerRef, peersRef }: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const dragRef = useRef<{ startTx: number; startTy: number; panX: number; panZ: number } | null>(
     null,
@@ -72,6 +74,16 @@ export function Minimap({ map, sceneRef, playerRef }: Props) {
       ctx.lineWidth = 2
       ctx.strokeRect(vx + 1, vy + 1, vw - 2, vh - 2)
 
+      for (const peer of peersRef.current) {
+        ctx.fillStyle = peer.kind === 'npc' ? '#ef4444' : '#4ade80'
+        ctx.strokeStyle = peer.kind === 'npc' ? '#7f1d1d' : '#14532d'
+        ctx.lineWidth = 1
+        ctx.beginPath()
+        ctx.arc((peer.x / TILE) * tw, (peer.y / TILE) * th, 2.8, 0, Math.PI * 2)
+        ctx.fill()
+        ctx.stroke()
+      }
+
       ctx.fillStyle = '#4ade80'
       ctx.strokeStyle = '#14532d'
       ctx.lineWidth = 1.5
@@ -84,7 +96,7 @@ export function Minimap({ map, sceneRef, playerRef }: Props) {
     }
     raf = requestAnimationFrame(draw)
     return () => cancelAnimationFrame(raf)
-  }, [sceneRef, playerRef])
+  }, [sceneRef, playerRef, peersRef])
 
   const clientToTile = (clientX: number, clientY: number) => {
     const el = canvasRef.current!
