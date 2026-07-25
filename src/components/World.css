@@ -386,6 +386,55 @@
   color: #fca5a5;
 }
 
+.world__share-block {
+  position: fixed;
+  inset: 0;
+  z-index: 9000;
+  display: grid;
+  place-items: center;
+  padding: 1.5rem;
+  background: rgba(15, 23, 42, 0.72);
+  backdrop-filter: blur(6px);
+}
+
+.world__share-block-card {
+  width: min(360px, 100%);
+  padding: 1.35rem 1.25rem 1.15rem;
+  border-radius: 14px;
+  border: 1px solid rgba(254, 202, 202, 0.35);
+  background: linear-gradient(165deg, #1e293b 0%, #0f172a 75%);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.45);
+  text-align: center;
+  color: #f8fafc;
+}
+
+.world__share-block-card h2 {
+  margin: 0 0 0.55rem;
+  font-size: 1.15rem;
+  font-weight: 800;
+}
+
+.world__share-block-card p {
+  margin: 0 0 1rem;
+  font-size: 0.9rem;
+  line-height: 1.45;
+  color: #cbd5e1;
+}
+
+.world__share-block-card button {
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  border-radius: 10px;
+  background: rgba(200, 16, 46, 0.28);
+  color: #fecaca;
+  padding: 0.55rem 1.25rem;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.world__share-block-card button:hover {
+  background: rgba(200, 16, 46, 0.42);
+}
+
 .world__screen {
   position: absolute;
   z-index: 5;
