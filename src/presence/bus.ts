@@ -59,6 +59,22 @@ export class PresenceBus {
       this.emit()
       return
     }
+    if (msg.type === 'npc-sync') {
+      let changed = false
+      for (const pose of msg.poses) {
+        const peer = this.peers.get(pose.id)
+        // Unknown ids resolve themselves on the next welcome.
+        if (!peer || peer.kind !== 'npc') continue
+        peer.x = pose.x
+        peer.y = pose.y
+        peer.facing = pose.facing
+        peer.roomId = pose.roomId
+        peer.updatedAt = pose.updatedAt
+        changed = true
+      }
+      if (changed) this.emit()
+      return
+    }
     if (msg.type === 'leave' && msg.id !== this.selfId) {
       this.peers.delete(msg.id)
       this.emit()
@@ -70,6 +86,7 @@ export class PresenceBus {
   }
 
   publish(peer: ActorPresence) {
+    if (peer.kind !== 'user') return
     this.net.send({ type: 'presence', peer })
   }
 
@@ -84,7 +101,7 @@ export class PresenceBus {
   getPeers(): ActorPresence[] {
     const now = Date.now()
     for (const [id, p] of this.peers) {
-      if (now - p.updatedAt > STALE_MS) this.peers.delete(id)
+      if (p.kind === 'user' && now - p.updatedAt > STALE_MS) this.peers.delete(id)
     }
     return [...this.peers.values()]
   }

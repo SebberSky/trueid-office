@@ -1,4 +1,10 @@
-import type { ActorPresence, CharacterLook, Facing, PeerPresence } from '../src/types'
+import type {
+  ActorPresence,
+  CharacterLook,
+  Facing,
+  NpcPoseUpdate,
+  PeerPresence,
+} from '../src/types'
 import type { ChatMessage, DmMessage, PinnedMessage } from '../src/chat/types'
 import type { ActivityEvent } from '../src/chat/RoomActivity'
 import type { SignalData } from '../src/presence/bus'
@@ -59,6 +65,8 @@ export type ServerMsg =
       lastPose?: SavedPoseMsg | null
     }
   | { type: 'presence'; peer: ActorPresence }
+  /** Batched NPC movement — only NPCs that actually moved this tick. */
+  | { type: 'npc-sync'; poses: NpcPoseUpdate[] }
   | { type: 'leave'; id: string }
   | { type: 'signal'; from: string; data: SignalData }
   | { type: 'chat'; message: ChatMessage }
@@ -94,6 +102,7 @@ export type {
   SignalData,
   CharacterLook,
   ActorPresence,
+  NpcPoseUpdate,
   PeerPresence,
   ChatMessage,
   PinnedMessage,

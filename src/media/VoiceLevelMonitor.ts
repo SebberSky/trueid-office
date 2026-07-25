@@ -10,7 +10,7 @@ export class VoiceLevelMonitor {
       stream: MediaStream
       source: MediaStreamAudioSourceNode
       analyser: AnalyserNode
-      data: Uint8Array
+      data: Uint8Array<ArrayBuffer>
     }
   >()
 
@@ -92,7 +92,7 @@ export class VoiceLevelMonitor {
       stream,
       source,
       analyser,
-      data: new Uint8Array(analyser.fftSize),
+      data: new Uint8Array(new ArrayBuffer(analyser.fftSize)),
     })
   }
 

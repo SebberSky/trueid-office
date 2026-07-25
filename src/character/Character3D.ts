@@ -69,7 +69,6 @@ export class Character3D {
   private speakSprite: THREE.Sprite | null = null
   private speakLevel = 0
   private speakPhase = 0
-  private speakCanvas: HTMLCanvasElement | null = null
   private speakCtx: CanvasRenderingContext2D | null = null
   private gait: Gait = 'human'
   private animalKind: AnimalKind | null = null
@@ -842,7 +841,6 @@ export class Character3D {
     const canvas = document.createElement('canvas')
     canvas.width = 128
     canvas.height = 72
-    this.speakCanvas = canvas
     this.speakCtx = canvas.getContext('2d')
     const tex = new THREE.CanvasTexture(canvas)
     tex.magFilter = THREE.LinearFilter
@@ -1286,7 +1284,6 @@ export class Character3D {
       this.speakSprite.material.dispose()
       ;(this.speakSprite.material as THREE.SpriteMaterial).map?.dispose()
       this.speakSprite = null
-      this.speakCanvas = null
       this.speakCtx = null
     }
     this.root.traverse((obj) => {

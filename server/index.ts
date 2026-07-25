@@ -4,8 +4,10 @@ import type { ActorPresence } from '../src/types'
 import { actorLabel, isUserPresence, normalizeActorPresence } from '../src/types'
 import type { PinnedMessage } from '../src/chat/types'
 import type { ClientMsg, ServerMsg } from '../shared/protocol'
+import { generateWorld } from '../src/world/terrain'
 import { ensureDataDir, loadAppearance, saveAppearance } from './appearances'
 import { ensurePositionDir, loadPosition, savePosition, type SavedPose } from './positions'
+import { NpcRuntime } from './npc/runtime'
 import {
   fallGuysWelcomeLobby,
   fallGuysWelcomeRace,
@@ -29,6 +31,7 @@ const STALE_MS = 5000
 const PIN_TEXT_MAX = 280
 /** Debounce disk writes while walking. */
 const POSE_SAVE_MS = 2000
+const NPC_TICK_MS = 500
 
 type Client = {
   ws: WebSocket
@@ -41,6 +44,7 @@ type Client = {
 }
 
 const clients = new Set<Client>()
+const npcRuntime = new NpcRuntime(generateWorld(20260717))
 /** Locked meeting rooms (plaza-main is never lockable). */
 const lockedRooms = new Map<string, { byId: string; byName: string }>()
 /** One pinned chat message per room (any room including plaza). */
@@ -193,6 +197,7 @@ const server = http.createServer(async (req, res) => {
         build: BUILD_TAG,
         peers: livePeers().length,
         clients: clients.size,
+        npcs: npcRuntime.size,
         xo: xoDebugState({ clients, send, broadcast }),
       }),
     )
@@ -353,7 +358,10 @@ wss.on('connection', (ws) => {
       const lastPose = email ? await loadPosition(email) : null
       send(ws, {
         type: 'welcome',
-        peers: livePeers().filter((p) => p.id !== msg.id),
+        peers: [
+          ...livePeers().filter((p) => p.id !== msg.id),
+          ...npcRuntime.snapshot(),
+        ],
         lockedRooms: lockedRoomIds(),
         pinnedMessages: allPinnedMessages(),
         fallguys: fallGuysWelcomeLobby({ clients, send, broadcast }),
@@ -608,6 +616,12 @@ setInterval(() => {
   }
   clearEmptyRooms()
 }, 2000)
+
+// One batched frame per tick keeps NPC traffic at O(clients), not O(npcs × clients).
+setInterval(() => {
+  const poses = npcRuntime.tick()
+  if (poses.length > 0) broadcast({ type: 'npc-sync', poses })
+}, NPC_TICK_MS)
 
 await ensureDataDir()
 await ensurePositionDir()

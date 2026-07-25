@@ -148,9 +148,27 @@ export interface NpcPresence extends ActorPresenceBase {
   kind: 'npc'
   /** Stable NPC identity for later phases (role, script, interact). */
   npcKey: string
+  /** Whether clients may offer warp-to-NPC for this actor. */
+  warpEnabled: boolean
+  /** Current script motion mode, exposed for the NPC directory UI. */
+  behavior: 'idle' | 'patrol'
 }
 
 export type ActorPresence = UserPresence | NpcPresence
+
+/**
+ * Compact NPC movement delta. Identity and `look` arrive once via `welcome`,
+ * so recurring server ticks only carry pose — this keeps bandwidth flat as the
+ * NPC population grows.
+ */
+export interface NpcPoseUpdate {
+  id: string
+  x: number
+  y: number
+  facing: Facing
+  roomId: string | null
+  updatedAt: number
+}
 
 /** @deprecated Prefer ActorPresence — alias kept for gradual migration. */
 export type PeerPresence = ActorPresence
@@ -160,6 +178,8 @@ export type WireActorPresence = ActorPresenceBase & {
   kind?: 'user' | 'npc'
   email?: string
   npcKey?: string
+  warpEnabled?: boolean
+  behavior?: 'idle' | 'patrol'
 }
 
 export function isUserPresence(p: ActorPresence): p is UserPresence {
@@ -205,6 +225,8 @@ export function normalizeActorPresence(raw: WireActorPresence): ActorPresence {
       ...base,
       kind: 'npc',
       npcKey: (raw.npcKey || raw.id || 'npc').trim() || 'npc',
+      warpEnabled: raw.warpEnabled === true,
+      behavior: raw.behavior === 'patrol' ? 'patrol' : 'idle',
     }
   }
   return {

@@ -43,7 +43,7 @@ export function CharacterCreator() {
           <p className="creator__eyebrow">สร้างตัวละคร</p>
           <h1>ออกแบบตัวตนใน Office</h1>
         </div>
-        <button type="button" className="ghost" onClick={logout}>
+        <button type="button" className="ghost" onClick={() => logout()}>
           ออกจากระบบ
         </button>
       </header>
