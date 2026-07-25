@@ -18,6 +18,7 @@ describe('NpcRuntime', () => {
       voiceOn: false,
       sharing: false,
       warpEnabled: true,
+      interactable: true,
       behavior: 'idle',
     })
     expect(janitor?.look.displayName).toBe('แม่บ้าน')
@@ -136,6 +137,7 @@ describe('normalizeActorPresence', () => {
     expect(normalizeActorPresence(raw)).toMatchObject({
       kind: 'npc',
       warpEnabled: false,
+      interactable: false,
       behavior: 'idle',
     })
   })

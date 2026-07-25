@@ -87,6 +87,8 @@ export class NpcRuntime {
   private readonly records: NpcRecord[] = []
   /** Patrol subset — idle NPCs are skipped entirely each tick. */
   private readonly moving: NpcRecord[] = []
+  private readonly byId = new Map<string, NpcRecord>()
+  private readonly byKey = new Map<string, NpcRecord>()
   private lastTickAt: number
 
   constructor(
@@ -149,6 +151,7 @@ export class NpcRuntime {
           id: `npc:${npcKey}`,
           npcKey,
           warpEnabled: script.warpEnabled,
+          interactable: !!script.interact,
           behavior: script.behavior.type,
           look: script.look,
           x: start.x,
@@ -162,6 +165,8 @@ export class NpcRuntime {
       }
 
       this.records.push(record)
+      this.byId.set(record.peer.id, record)
+      this.byKey.set(npcKey, record)
       if (waypoints.length > 0) this.moving.push(record)
     }
   }
@@ -235,5 +240,13 @@ export class NpcRuntime {
   /** Full presence for `welcome`; `look` is shared immutable registry data. */
   snapshot(): NpcPresence[] {
     return this.records.map((record) => ({ ...record.peer }))
+  }
+
+  getPeer(npcId: string): NpcPresence | undefined {
+    return this.byId.get(npcId)?.peer
+  }
+
+  getScript(npcKey: string): NpcScript | undefined {
+    return this.byKey.get(npcKey)?.script
   }
 }

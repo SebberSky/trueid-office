@@ -2,7 +2,7 @@ import * as THREE from 'three'
 import type { WorldMap } from './terrain'
 import { MAP_H, MAP_W, TILE, isWaterAt, roomAt, roomDoor } from './terrain'
 import { TERRAIN_HEIGHT, TERRAIN_HEX, surfaceY, toWorldXZ } from './heights'
-import { Character3D } from '../character/Character3D'
+import { Character3D, NpcCharacter3D } from '../character/Character3D'
 import type { CharacterLook, Facing, ActorPresence, RoomDef } from '../types'
 import { canFlyOverWater, normalizeAnimalKind } from '../types'
 import { FALLGUYS_ROOM_ID } from '../fallguys/types'
@@ -20,6 +20,11 @@ const PEER_CATCHUP = 340
 const PEER_SNAP_DIST = 200
 /** NPC avatars beyond this radius (in px) are not instantiated — well past camera range. */
 const NPC_CULL_DIST_SQ = (48 * TILE) ** 2
+
+const peerAvatarByKind = {
+  user: (look: CharacterLook) => new Character3D(look),
+  npc: (look: CharacterLook) => new NpcCharacter3D(look),
+} as const
 
 type PeerMotion = {
   x: number
@@ -1036,7 +1041,7 @@ export class CampusScene {
       let avatar = this.peers.get(p.id)
       let motion = this.peerMotion.get(p.id)
       if (!avatar || !motion) {
-        avatar = new Character3D(p.look)
+        avatar = peerAvatarByKind[p.kind](p.look)
         this.peers.set(p.id, avatar)
         this.scene.add(avatar.root)
         motion = {

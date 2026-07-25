@@ -1,0 +1,39 @@
+---
+description: Prefer polymorphism over kind checks when NPC and user actors behave differently
+alwaysApply: true
+---
+
+# NPC vs user: use polymorphism, not `kind` branches
+
+When NPC and human actors need different behavior, express the difference by
+**overriding in a subclass** (or a kind-keyed factory/map), not by branching on
+`p.kind === 'npc'` at each call site.
+
+Reference implementation: `NpcCharacter3D` in [Character3D.ts](src/character/Character3D.ts)
+overrides `nameplateColor`; `CampusScene` picks the class via `peerAvatarByKind`.
+
+```ts
+// BAD — color decided at every call site
+avatar = new Character3D(look, p.kind === 'npc' ? '#f87171' : '#fff')
+avatar.setNameplate(name, voiceOn, p.kind === 'npc' ? '#f87171' : '#fff')
+
+// GOOD — behavior owned by the class
+class Character3D {
+  protected get nameplateColor(): string { return '#fff' }
+}
+class NpcCharacter3D extends Character3D {
+  protected override get nameplateColor(): string { return '#f87171' }
+}
+
+const peerAvatarByKind = {
+  user: (look: CharacterLook) => new Character3D(look),
+  npc: (look: CharacterLook) => new NpcCharacter3D(look),
+} as const
+
+avatar = peerAvatarByKind[p.kind](look)
+```
+
+Applies to new NPC/user differences going forward (visuals, interaction,
+capabilities). Existing `isUserPresence` / `isNpcPresence` filters for
+roster, DM, WebRTC, capacity, and minigames stay as they are — do not
+refactor them unless explicitly asked.

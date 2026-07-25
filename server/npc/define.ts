@@ -1,4 +1,5 @@
 import type { CharacterLook, Facing } from '../../src/types'
+import type { InteractConfig } from './interact/types'
 
 export type NpcWaypoint = { x: number; y: number }
 
@@ -13,9 +14,11 @@ export type NpcScript = {
   facing: Facing
   roomId?: string | null
   warpEnabled: boolean
-  /** Reserved for Phase 2 interaction routing. */
+  /** Soft tags for routing / filtering (e.g. 'gossip'). */
   tags?: string[]
   behavior: NpcBehavior
+  /** When set, players may start a talk session with this NPC. */
+  interact?: InteractConfig
 }
 
 type NpcLookInput = Partial<CharacterLook> & { displayName: string }

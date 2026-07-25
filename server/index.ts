@@ -8,6 +8,7 @@ import { generateWorld } from '../src/world/terrain'
 import { ensureDataDir, loadAppearance, saveAppearance } from './appearances'
 import { ensurePositionDir, loadPosition, savePosition, type SavedPose } from './positions'
 import { NpcRuntime } from './npc/runtime'
+import { InteractEngine } from './npc/interact'
 import {
   fallGuysWelcomeLobby,
   fallGuysWelcomeRace,
@@ -45,6 +46,7 @@ type Client = {
 
 const clients = new Set<Client>()
 const npcRuntime = new NpcRuntime(generateWorld(20260717))
+const interactEngine = new InteractEngine(npcRuntime)
 /** Locked meeting rooms (plaza-main is never lockable). */
 const lockedRooms = new Map<string, { byId: string; byName: string }>()
 /** One pinned chat message per room (any room including plaza). */
@@ -117,6 +119,9 @@ function replaceSessionsForEmail(email: string, keep: Client) {
     maybeSavePose(c, true)
     c.replaced = true
     const oldId = c.id
+    if (oldId) {
+      interactEngine.endByUser(oldId, (out) => send(c.ws, out), 'disconnect')
+    }
     send(c.ws, {
       type: 'session-replaced',
       reason: 'logged_in_elsewhere',
@@ -584,12 +589,50 @@ wss.on('connection', (ws) => {
       // clients already apply locally on publish — skip echo for activity from others only
       return
     }
+
+    if (msg.type === 'interact-start') {
+      if (!client.id || !client.peer || !isUserPresence(client.peer)) {
+        send(ws, { type: 'interact-error', message: 'ต้องออนไลน์ก่อนคุยกับ NPC' })
+        return
+      }
+      await interactEngine.start({
+        user: client.peer,
+        npcId: String(msg.npcId || ''),
+        send: (out) => send(ws, out),
+      })
+      return
+    }
+
+    if (msg.type === 'interact-choose') {
+      if (!client.id) return
+      await interactEngine.choose({
+        userId: client.id,
+        sessionId: String(msg.sessionId || ''),
+        optionId: String(msg.optionId || ''),
+        send: (out) => send(ws, out),
+      })
+      return
+    }
+
+    if (msg.type === 'interact-end') {
+      if (!client.id) return
+      interactEngine.end({
+        userId: client.id,
+        sessionId: String(msg.sessionId || ''),
+        send: (out) => send(ws, out),
+        reason: 'client',
+      })
+      return
+    }
   })
 
   ws.on('close', () => {
     if (client.replaced) return
     maybeSavePose(client, true)
     const id = client.id
+    if (id) {
+      interactEngine.endByUser(id, (out) => send(ws, out), 'disconnect')
+    }
     clients.delete(client)
     if (id) broadcast({ type: 'leave', id })
     clearEmptyRooms()
@@ -615,6 +658,11 @@ setInterval(() => {
     }
   }
   clearEmptyRooms()
+  interactEngine.sweepIdle((userId, msg) => {
+    for (const c of clients) {
+      if (c.id === userId && c.ws.readyState === 1) send(c.ws, msg)
+    }
+  })
 }, 2000)
 
 // One batched frame per tick keeps NPC traffic at O(clients), not O(npcs × clients).
