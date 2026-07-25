@@ -785,6 +785,20 @@ export class Character3D {
     return out
   }
 
+  /** Top of hover/click hit volume (above nameplate). */
+  getInteractTopWorld(out: THREE.Vector3) {
+    this.label.getWorldPosition(out)
+    out.y += 0.35
+    return out
+  }
+
+  /** Bottom of hover/click hit volume (near feet). */
+  getInteractBottomWorld(out: THREE.Vector3) {
+    this.root.getWorldPosition(out)
+    out.y += 0.12
+    return out
+  }
+
   setPose(
     px: number,
     pz: number,

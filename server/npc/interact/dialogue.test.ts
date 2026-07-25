@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { applyTemplate, nextNodeIdForChoice, resolveContentNode } from './dialogue'
+import {
+  applyTemplate,
+  choiceResponseMode,
+  nextNodeIdForChoice,
+  resolveContentNode,
+} from './dialogue'
 import { resolveNodeReply } from './sources'
 import { InteractSessionStore } from './sessions'
 import { InteractEngine } from './engine'
@@ -52,6 +57,32 @@ describe('dialogue helpers', () => {
     expect(nextNodeIdForChoice(sample.nodes.hub!, 'a')).toBe('pool')
     expect(nextNodeIdForChoice(sample.nodes.hub!, 'bye')).toBeNull()
     expect(nextNodeIdForChoice(sample.nodes.hub!, 'missing')).toBeUndefined()
+  })
+
+  it('marks only API/LLM destinations as async', () => {
+    const config: InteractConfig = {
+      startNode: 'hub',
+      nodes: {
+        hub: {
+          id: 'hub',
+          choices: [
+            { id: 'static', label: 'Static', next: 'static' },
+            { id: 'api', label: 'API', next: 'api-pool' },
+            { id: 'end', label: 'End' },
+          ],
+        },
+        static: { id: 'static', say: 'Ready' },
+        'api-pool': { id: 'api-pool', randomFrom: ['static', 'remote'] },
+        remote: {
+          id: 'remote',
+          source: { type: 'api', provider: 'test' },
+        },
+      },
+    }
+
+    expect(choiceResponseMode(config, config.nodes.hub!, 'static')).toBe('immediate')
+    expect(choiceResponseMode(config, config.nodes.hub!, 'api')).toBe('async')
+    expect(choiceResponseMode(config, config.nodes.hub!, 'end')).toBe('immediate')
   })
 
   it('resolves scripted reply with choices', async () => {

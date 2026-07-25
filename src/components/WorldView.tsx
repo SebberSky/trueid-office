@@ -190,8 +190,9 @@ export function WorldView() {
     npcId: string
     npcName: string
     text: string
-    choices: { id: string; label: string }[]
+    choices: { id: string; label: string; responseMode?: 'immediate' | 'async' }[]
     streaming: boolean
+    pendingChoiceId: string | null
   }
   const [npcTalk, setNpcTalk] = useState<NpcTalkState | null>(null)
   const npcTalkRef = useRef<NpcTalkState | null>(null)
@@ -200,11 +201,11 @@ export function WorldView() {
   const nearTalkNpcRef = useRef<NpcPresence | null>(null)
   nearTalkNpcRef.current = nearTalkNpc
   const [hoverTalkNpc, setHoverTalkNpc] = useState<NpcPresence | null>(null)
-  const [npcPromptPos, setNpcPromptPos] = useState<{ x: number; y: number } | null>(null)
   const [npcHoverPos, setNpcHoverPos] = useState<{ x: number; y: number } | null>(null)
   const startNpcTalkRef = useRef<(npc: NpcPresence) => void>(() => {})
   const endNpcTalkRef = useRef<() => void>(() => {})
   const npcTalkPendingRef = useRef(false)
+  const npcChoicePendingRef = useRef(false)
 
   const fishTimerRef = useRef<number | null>(null)
   const fishPhaseRef = useRef<'idle' | 'waiting' | 'catch'>('idle')
@@ -347,6 +348,7 @@ export function WorldView() {
   endNpcTalkRef.current = () => {
     const talk = npcTalkRef.current
     npcTalkPendingRef.current = false
+    npcChoicePendingRef.current = false
     if (!talk) return
     netRef.current?.send({ type: 'interact-end', sessionId: talk.sessionId })
     setNpcTalk(null)
@@ -605,11 +607,13 @@ export function WorldView() {
           text: '',
           choices: [],
           streaming: true,
+          pendingChoiceId: null,
         })
         return
       }
       if (msg.type === 'npc-dialogue') {
         npcTalkPendingRef.current = false
+        if (msg.phase === 'done') npcChoicePendingRef.current = false
         setNpcTalk((prev) => {
           if (!prev || prev.sessionId !== msg.sessionId) return prev
           if (msg.phase === 'delta') {
@@ -624,12 +628,14 @@ export function WorldView() {
             text: msg.text ?? prev.text,
             choices: msg.choices ?? [],
             streaming: false,
+            pendingChoiceId: null,
           }
         })
         return
       }
       if (msg.type === 'interact-ended') {
         npcTalkPendingRef.current = false
+        npcChoicePendingRef.current = false
         setNpcTalk((prev) => {
           if (!prev || !msg.sessionId) return prev
           return prev.sessionId === msg.sessionId ? null : prev
@@ -638,6 +644,8 @@ export function WorldView() {
       }
       if (msg.type === 'interact-error') {
         npcTalkPendingRef.current = false
+        npcChoicePendingRef.current = false
+        setNpcTalk((prev) => (prev ? { ...prev, pendingChoiceId: null } : prev))
         setMediaError(msg.message)
         return
       }
@@ -970,7 +978,6 @@ export function WorldView() {
     let lastNetFacing = facing.current
     let lastNearWater: boolean | null = null
     let lastNearNpcAt = 0
-    let lastPromptUv: { x: number; y: number } | null = null
     let affordancesClearedForTalk = false
     let lastHoverId: string | null = null
     let lastHoverUv: { x: number; y: number } | null = null
@@ -1182,7 +1189,7 @@ export function WorldView() {
       const { peers } = maintainMedia(now)
       scene.syncPeers(peers, map, dt)
 
-      // Throttled local NPC talk affordance (no network). Avoid setState every frame.
+      // Throttled local NPC talk affordance (no network) — same gate pattern as nearWater.
       if (!talking) {
         affordancesClearedForTalk = false
         if (now - lastNearNpcAt >= 100) {
@@ -1195,34 +1202,12 @@ export function WorldView() {
           } else if (nearest) {
             nearTalkNpcRef.current = nearest
           }
-          if (nearest) {
-            const uv = scene.projectHeadScreen(nearest.id)
-            if (
-              uv &&
-              (!lastPromptUv ||
-                Math.abs(uv.x - lastPromptUv.x) > 0.002 ||
-                Math.abs(uv.y - lastPromptUv.y) > 0.002)
-            ) {
-              lastPromptUv = uv
-              setNpcPromptPos(uv)
-            } else if (!uv && lastPromptUv) {
-              lastPromptUv = null
-              setNpcPromptPos(null)
-            }
-          } else if (lastPromptUv || prev) {
-            lastPromptUv = null
-            setNpcPromptPos(null)
-          }
         }
       } else if (!affordancesClearedForTalk) {
         affordancesClearedForTalk = true
         if (nearTalkNpcRef.current) {
           nearTalkNpcRef.current = null
           setNearTalkNpc(null)
-        }
-        if (lastPromptUv) {
-          lastPromptUv = null
-          setNpcPromptPos(null)
         }
         if (lastHoverId) {
           lastHoverId = null
@@ -1278,7 +1263,7 @@ export function WorldView() {
       const cssY = e.clientY - rect.top
       const hit = pickInteractableNpcAtScreen(
         peersRef.current,
-        (id) => scene.projectHeadScreen(id),
+        (id) => scene.projectAvatarHitScreen(id),
         cssX,
         cssY,
         rect.width,
@@ -1327,7 +1312,7 @@ export function WorldView() {
       const cssY = e.clientY - rect.top
       const hit = pickInteractableNpcAtScreen(
         peersRef.current,
-        (id) => scene.projectHeadScreen(id),
+        (id) => scene.projectAvatarHitScreen(id),
         cssX,
         cssY,
         rect.width,
@@ -1801,26 +1786,36 @@ export function WorldView() {
           onDone={(id) => setFloatEmojis((prev) => prev.filter((e) => e.id !== id))}
         />
         <FishingCatchOverlay catchItem={fishCatch} />
-        {nearWater && !fishingActive && fgRole === 'none' && !npcTalk && (
-          <div className="world__fish-hint">กด F เพื่อตกปลา</div>
+        {nearTalkNpc && !npcTalk ? (
+          <div className="world__fish-hint">กด T เพื่อคุยกับ{actorLabel(nearTalkNpc)}</div>
+        ) : (
+          nearWater &&
+          !fishingActive &&
+          fgRole === 'none' &&
+          !npcTalk && <div className="world__fish-hint">กด F เพื่อตกปลา</div>
         )}
         {fishingActive && !fishCatch && (
           <div className="world__fish-hint is-wait">กำลังรอปลากัด… ดูทุ่นบนน้ำ</div>
-        )}
-        {nearTalkNpc && npcPromptPos && !npcTalk && (
-          <div
-            className="world__npc-prompt"
-            style={{ left: `${npcPromptPos.x * 100}%`, top: `${npcPromptPos.y * 100}%` }}
-          >
-            กด T เพื่อคุยกับ{actorLabel(nearTalkNpc)}
-          </div>
         )}
         {hoverTalkNpc && npcHoverPos && !npcTalk && (
           <div
             className="world__npc-chat-icon"
             style={{ left: `${npcHoverPos.x * 100}%`, top: `${npcHoverPos.y * 100}%` }}
             aria-hidden="true"
-          />
+          >
+            <svg className="world__npc-chat-icon-svg" viewBox="0 0 32 28" width="32" height="28">
+              <path
+                d="M4 3.5h24a3.5 3.5 0 0 1 3.5 3.5v11a3.5 3.5 0 0 1-3.5 3.5H14.2L8 26.5v-5H4A3.5 3.5 0 0 1 .5 18V7A3.5 3.5 0 0 1 4 3.5z"
+                fill="#f8fafc"
+                stroke="#0f172a"
+                strokeWidth="1.75"
+                strokeLinejoin="round"
+              />
+              <circle cx="10" cy="12.5" r="1.85" fill="#0f172a" />
+              <circle cx="16" cy="12.5" r="1.85" fill="#0f172a" />
+              <circle cx="22" cy="12.5" r="1.85" fill="#0f172a" />
+            </svg>
+          </div>
         )}
         <NpcDialoguePanel
           open={!!npcTalk}
@@ -1828,10 +1823,16 @@ export function WorldView() {
           text={npcTalk?.text ?? ''}
           choices={npcTalk?.choices ?? []}
           streaming={npcTalk?.streaming}
+          pendingChoiceId={npcTalk?.pendingChoiceId}
           onChoose={(optionId) => {
             const talk = npcTalkRef.current
-            if (!talk) return
-            setNpcTalk((prev) => (prev ? { ...prev, choices: [], streaming: true } : prev))
+            if (!talk || npcChoicePendingRef.current) return
+            const choice = talk.choices.find((candidate) => candidate.id === optionId)
+            if (!choice) return
+            npcChoicePendingRef.current = true
+            if (choice.responseMode === 'async') {
+              setNpcTalk((prev) => (prev ? { ...prev, pendingChoiceId: optionId } : prev))
+            }
             netRef.current?.send({
               type: 'interact-choose',
               sessionId: talk.sessionId,

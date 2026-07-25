@@ -50,3 +50,29 @@ export function nextNodeIdForChoice(node: DialogueNode, optionId: string): strin
   if (!choice.next) return null
   return choice.next
 }
+
+/**
+ * Whether selecting a choice can reach an API/LLM node before static content.
+ * Random pools are async when any branch is async, avoiding a misleading active UI.
+ */
+export function choiceResponseMode(
+  config: InteractConfig,
+  node: DialogueNode,
+  optionId: string,
+): 'immediate' | 'async' {
+  const nextId = nextNodeIdForChoice(node, optionId)
+  if (!nextId) return 'immediate'
+
+  const pending = [nextId]
+  const visited = new Set<string>()
+  while (pending.length > 0) {
+    const id = pending.pop()
+    if (!id || visited.has(id)) continue
+    visited.add(id)
+    const target = config.nodes[id]
+    if (!target) continue
+    if (target.source?.type === 'api' || target.source?.type === 'llm') return 'async'
+    if (target.randomFrom?.length) pending.push(...target.randomFrom)
+  }
+  return 'immediate'
+}

@@ -122,7 +122,12 @@ export type ServerMsg =
       phase: 'delta' | 'done'
       text?: string
       /** Present on `done` when the player may pick a response. */
-      choices?: { id: string; label: string }[]
+      choices?: {
+        id: string
+        label: string
+        /** How the destination node resolves after this choice is selected. */
+        responseMode?: 'immediate' | 'async'
+      }[]
       nodeId?: string
     }
   | { type: 'interact-error'; message: string }

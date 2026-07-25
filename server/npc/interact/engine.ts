@@ -4,6 +4,7 @@ import { inInteractRange } from '../../../shared/npcInteract'
 import type { NpcRuntime } from '../runtime'
 import type { NpcScript } from '../define'
 import {
+  choiceResponseMode,
   nextNodeIdForChoice,
   resolveContentNode,
 } from './dialogue'
@@ -228,7 +229,10 @@ export class InteractEngine {
       sessionId: session.sessionId,
       phase: 'done',
       text: reply.text,
-      choices: reply.choices,
+      choices: reply.choices.map((choice) => ({
+        ...choice,
+        responseMode: choiceResponseMode(script.interact!, node, choice.id),
+      })),
       nodeId: reply.nodeId,
     })
 
