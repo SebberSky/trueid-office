@@ -10,6 +10,7 @@ function janitor(warpEnabled: boolean): NpcPresence {
     id: 'npc:janitor-gossip',
     npcKey: 'janitor-gossip',
     warpEnabled,
+    interactable: false,
     behavior: 'idle',
     look: {
       species: 'female',

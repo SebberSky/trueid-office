@@ -150,6 +150,8 @@ export interface NpcPresence extends ActorPresenceBase {
   npcKey: string
   /** Whether clients may offer warp-to-NPC for this actor. */
   warpEnabled: boolean
+  /** Whether this NPC has an interact/dialogue script. */
+  interactable: boolean
   /** Current script motion mode, exposed for the NPC directory UI. */
   behavior: 'idle' | 'patrol'
 }
@@ -179,6 +181,7 @@ export type WireActorPresence = ActorPresenceBase & {
   email?: string
   npcKey?: string
   warpEnabled?: boolean
+  interactable?: boolean
   behavior?: 'idle' | 'patrol'
 }
 
@@ -226,6 +229,7 @@ export function normalizeActorPresence(raw: WireActorPresence): ActorPresence {
       kind: 'npc',
       npcKey: (raw.npcKey || raw.id || 'npc').trim() || 'npc',
       warpEnabled: raw.warpEnabled === true,
+      interactable: raw.interactable === true,
       behavior: raw.behavior === 'patrol' ? 'patrol' : 'idle',
     }
   }

@@ -1,0 +1,109 @@
+.npc-dialogue {
+  position: absolute;
+  left: 50%;
+  bottom: 1.1rem;
+  z-index: 35;
+  width: min(640px, calc(100% - 1.5rem));
+  transform: translateX(-50%);
+  pointer-events: none;
+}
+
+.npc-dialogue__chrome {
+  pointer-events: auto;
+  padding: 0.85rem 1rem 0.95rem;
+  border: 2px solid rgba(226, 232, 240, 0.55);
+  border-radius: 4px;
+  background: linear-gradient(180deg, rgba(15, 23, 42, 0.94), rgba(2, 6, 23, 0.96));
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
+  color: #f8fafc;
+}
+
+.npc-dialogue__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  margin-bottom: 0.55rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+}
+
+.npc-dialogue__head strong {
+  font-size: 1rem;
+  letter-spacing: 0.02em;
+}
+
+.npc-dialogue__close {
+  padding: 0.15rem 0.45rem;
+  border: 1px solid rgba(148, 163, 184, 0.45);
+  border-radius: 3px;
+  background: transparent;
+  color: #cbd5e1;
+  font: inherit;
+  font-size: 0.72rem;
+  cursor: pointer;
+}
+
+.npc-dialogue__text {
+  margin: 0;
+  min-height: 2.8em;
+  line-height: 1.55;
+  white-space: pre-wrap;
+  font-size: 0.95rem;
+}
+
+.npc-dialogue__cursor {
+  display: inline-block;
+  width: 0.55ch;
+  height: 1em;
+  margin-left: 0.1ch;
+  vertical-align: -0.1em;
+  background: #f8fafc;
+  animation: npc-dialogue-blink 0.9s step-end infinite;
+}
+
+@keyframes npc-dialogue-blink {
+  50% {
+    opacity: 0;
+  }
+}
+
+.npc-dialogue__choices {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.75rem 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.npc-dialogue__choices button {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.45rem;
+  width: 100%;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid rgba(125, 211, 252, 0.28);
+  border-radius: 3px;
+  background: rgba(14, 165, 233, 0.08);
+  color: #e0f2fe;
+  font: inherit;
+  font-size: 0.88rem;
+  text-align: left;
+  cursor: pointer;
+}
+
+.npc-dialogue__choices button:hover {
+  background: rgba(14, 165, 233, 0.18);
+  border-color: rgba(125, 211, 252, 0.55);
+}
+
+.npc-dialogue__idx {
+  color: #7dd3fc;
+  font-variant-numeric: tabular-nums;
+}
+
+.npc-dialogue__hint {
+  margin: 0.65rem 0 0;
+  color: #94a3b8;
+  font-size: 0.75rem;
+}

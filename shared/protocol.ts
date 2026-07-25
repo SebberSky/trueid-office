@@ -49,6 +49,10 @@ export type ClientMsg =
   | { type: 'xo-restart'; zoneIds?: string[] }
   | { type: 'xo-quit' }
   | { type: 'xo-move'; gameId: number; cell: number }
+  /** Start a 1:1 NPC dialogue session (server attaches actor context). */
+  | { type: 'interact-start'; npcId: string }
+  | { type: 'interact-choose'; sessionId: string; optionId: string }
+  | { type: 'interact-end'; sessionId: string }
 
 /** Server → Client */
 export type ServerMsg =
@@ -96,6 +100,32 @@ export type ServerMsg =
   | { type: 'session-replaced'; reason?: string }
   /** Host is about to restart (pm2) — clients should prepare to refresh. */
   | { type: 'server-updating'; inSec: number; at: number }
+  | {
+      type: 'interact-started'
+      sessionId: string
+      npcId: string
+      npcKey: string
+      displayName: string
+    }
+  | {
+      type: 'interact-ended'
+      sessionId: string
+      reason: 'client' | 'disconnect' | 'idle' | 'replaced' | 'error' | 'rejected'
+    }
+  /**
+   * Dialogue turn stream. Scripted replies may arrive as a single `done`;
+   * LLM/API providers (Phase 3+) can emit multiple `delta` chunks then `done`.
+   */
+  | {
+      type: 'npc-dialogue'
+      sessionId: string
+      phase: 'delta' | 'done'
+      text?: string
+      /** Present on `done` when the player may pick a response. */
+      choices?: { id: string; label: string }[]
+      nodeId?: string
+    }
+  | { type: 'interact-error'; message: string }
   | { type: 'error'; message: string }
 
 export type {

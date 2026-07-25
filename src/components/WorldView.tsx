@@ -32,7 +32,15 @@ import { PollPanel } from './PollPanel'
 import { FloatingEmojis, type FloatEmojiItem } from './FloatingEmojis'
 import { OnlineRoster, type RosterPerson } from './OnlineRoster'
 import { NpcPanel } from './NpcPanel'
+import { NpcDialoguePanel } from './NpcDialoguePanel'
 import { ServerUpdateBanner } from './ServerUpdateBanner'
+import {
+  facingToward,
+  inInteractRange,
+  isTextInputTarget,
+  nearestInteractableNpc,
+  pickInteractableNpcAtScreen,
+} from '../npc/interactClient'
 import { FishingCatchOverlay } from './FishingCatch'
 import { FallGuysGame } from './FallGuysGame'
 import { XoGame } from './XoGame'
@@ -177,6 +185,27 @@ export function WorldView() {
   xoRoleRef.current = xoRole
   const xoDismissedGameRef = useRef(0)
 
+  type NpcTalkState = {
+    sessionId: string
+    npcId: string
+    npcName: string
+    text: string
+    choices: { id: string; label: string }[]
+    streaming: boolean
+  }
+  const [npcTalk, setNpcTalk] = useState<NpcTalkState | null>(null)
+  const npcTalkRef = useRef<NpcTalkState | null>(null)
+  npcTalkRef.current = npcTalk
+  const [nearTalkNpc, setNearTalkNpc] = useState<NpcPresence | null>(null)
+  const nearTalkNpcRef = useRef<NpcPresence | null>(null)
+  nearTalkNpcRef.current = nearTalkNpc
+  const [hoverTalkNpc, setHoverTalkNpc] = useState<NpcPresence | null>(null)
+  const [npcPromptPos, setNpcPromptPos] = useState<{ x: number; y: number } | null>(null)
+  const [npcHoverPos, setNpcHoverPos] = useState<{ x: number; y: number } | null>(null)
+  const startNpcTalkRef = useRef<(npc: NpcPresence) => void>(() => {})
+  const endNpcTalkRef = useRef<() => void>(() => {})
+  const npcTalkPendingRef = useRef(false)
+
   const fishTimerRef = useRef<number | null>(null)
   const fishPhaseRef = useRef<'idle' | 'waiting' | 'catch'>('idle')
   const fishingActiveRef = useRef(false)
@@ -301,6 +330,27 @@ export function WorldView() {
 
   const publishRef = useRef(publish)
   publishRef.current = publish
+
+  startNpcTalkRef.current = (npc: NpcPresence) => {
+    if (!npc.interactable) return
+    if (npcTalkRef.current || npcTalkPendingRef.current) return
+    if (!inInteractRange(pos.current.x, pos.current.y, npc.x, npc.y)) {
+      setMediaError('อยู่ไกลเกินไป เข้าใกล้ NPC ก่อน')
+      return
+    }
+    facing.current = facingToward(pos.current.x, pos.current.y, npc.x, npc.y)
+    publishRef.current()
+    npcTalkPendingRef.current = true
+    netRef.current?.send({ type: 'interact-start', npcId: npc.id })
+  }
+
+  endNpcTalkRef.current = () => {
+    const talk = npcTalkRef.current
+    npcTalkPendingRef.current = false
+    if (!talk) return
+    netRef.current?.send({ type: 'interact-end', sessionId: talk.sessionId })
+    setNpcTalk(null)
+  }
 
   syncVoiceMonitorRef.current = () => {
     const media = mediaRef.current
@@ -546,6 +596,51 @@ export function WorldView() {
         }
         return
       }
+      if (msg.type === 'interact-started') {
+        npcTalkPendingRef.current = false
+        setNpcTalk({
+          sessionId: msg.sessionId,
+          npcId: msg.npcId,
+          npcName: msg.displayName,
+          text: '',
+          choices: [],
+          streaming: true,
+        })
+        return
+      }
+      if (msg.type === 'npc-dialogue') {
+        npcTalkPendingRef.current = false
+        setNpcTalk((prev) => {
+          if (!prev || prev.sessionId !== msg.sessionId) return prev
+          if (msg.phase === 'delta') {
+            return {
+              ...prev,
+              text: `${prev.text}${msg.text ?? ''}`,
+              streaming: true,
+            }
+          }
+          return {
+            ...prev,
+            text: msg.text ?? prev.text,
+            choices: msg.choices ?? [],
+            streaming: false,
+          }
+        })
+        return
+      }
+      if (msg.type === 'interact-ended') {
+        npcTalkPendingRef.current = false
+        setNpcTalk((prev) => {
+          if (!prev || !msg.sessionId) return prev
+          return prev.sessionId === msg.sessionId ? null : prev
+        })
+        return
+      }
+      if (msg.type === 'interact-error') {
+        npcTalkPendingRef.current = false
+        setMediaError(msg.message)
+        return
+      }
       if (msg.type !== 'room-lock') return
       setLockedRooms((prev) => {
         const next = new Set(prev)
@@ -673,6 +768,11 @@ export function WorldView() {
       window.removeEventListener('pointerdown', resumeAudio)
       window.removeEventListener('keydown', resumeAudio)
       resumeAudioRef.current = null
+      const talk = npcTalkRef.current
+      if (talk) {
+        net.send({ type: 'interact-end', sessionId: talk.sessionId })
+      }
+      npcTalkPendingRef.current = false
       onLeave()
       if (peerUiTimerRef.current) {
         clearTimeout(peerUiTimerRef.current)
@@ -711,11 +811,43 @@ export function WorldView() {
     ])
     const onDown = (e: KeyboardEvent) => {
       if (!worldActiveRef.current) return
-      const tag = (e.target as HTMLElement)?.tagName
-      if (tag === 'INPUT' || tag === 'TEXTAREA') return
+      if (isTextInputTarget(e.target)) return
       if (moveCodes.has(e.code)) {
+        if (npcTalkRef.current) {
+          e.preventDefault()
+          return
+        }
         e.preventDefault()
         keys.current.add(e.code)
+      }
+      if (e.code === 'Escape' && !e.repeat) {
+        if (npcTalkRef.current) {
+          e.preventDefault()
+          endNpcTalkRef.current()
+          return
+        }
+      }
+      if (npcTalkRef.current) {
+        // Lock world actions while in dialogue (movement already blocked above).
+        if (
+          e.code === 'Space' ||
+          e.code === 'KeyE' ||
+          e.code === 'KeyF' ||
+          e.code === 'KeyT' ||
+          e.code === 'ControlLeft' ||
+          e.code === 'ControlRight'
+        ) {
+          e.preventDefault()
+        }
+        return
+      }
+      if (e.code === 'KeyT' && !e.repeat) {
+        const npc = nearTalkNpcRef.current
+        if (npc) {
+          e.preventDefault()
+          startNpcTalkRef.current(npc)
+          return
+        }
       }
       if (e.code === 'Space') {
         e.preventDefault()
@@ -837,6 +969,11 @@ export function WorldView() {
     let lastNetY = pos.current.y
     let lastNetFacing = facing.current
     let lastNearWater: boolean | null = null
+    let lastNearNpcAt = 0
+    let lastPromptUv: { x: number; y: number } | null = null
+    let affordancesClearedForTalk = false
+    let lastHoverId: string | null = null
+    let lastHoverUv: { x: number; y: number } | null = null
 
     const resize = () => {
       scene.setSize(wrap.clientWidth, wrap.clientHeight)
@@ -973,17 +1110,24 @@ export function WorldView() {
 
       let dx = 0
       let dy = 0
+      const talking = !!npcTalkRef.current
+      if (talking) {
+        keys.current.clear()
+        stickRef.current = { x: 0, y: 0 }
+      }
       const k = keys.current
-      if (k.has('ArrowLeft') || k.has('KeyA')) dx -= 1
-      if (k.has('ArrowRight') || k.has('KeyD')) dx += 1
-      if (k.has('ArrowUp') || k.has('KeyW')) dy -= 1
-      if (k.has('ArrowDown') || k.has('KeyS')) dy += 1
+      if (!talking) {
+        if (k.has('ArrowLeft') || k.has('KeyA')) dx -= 1
+        if (k.has('ArrowRight') || k.has('KeyD')) dx += 1
+        if (k.has('ArrowUp') || k.has('KeyW')) dy -= 1
+        if (k.has('ArrowDown') || k.has('KeyS')) dy += 1
 
-      const stick = stickRef.current
-      const stickMag = Math.hypot(stick.x, stick.y)
-      if (stickMag > 0.12) {
-        dx += stick.x
-        dy += stick.y
+        const stick = stickRef.current
+        const stickMag = Math.hypot(stick.x, stick.y)
+        if (stickMag > 0.12) {
+          dx += stick.x
+          dy += stick.y
+        }
       }
 
       const crouching = crouchingRef.current
@@ -1037,6 +1181,58 @@ export function WorldView() {
 
       const { peers } = maintainMedia(now)
       scene.syncPeers(peers, map, dt)
+
+      // Throttled local NPC talk affordance (no network). Avoid setState every frame.
+      if (!talking) {
+        affordancesClearedForTalk = false
+        if (now - lastNearNpcAt >= 100) {
+          lastNearNpcAt = now
+          const nearest = nearestInteractableNpc(peers, pos.current.x, pos.current.y)
+          const prev = nearTalkNpcRef.current
+          if ((nearest?.id ?? null) !== (prev?.id ?? null)) {
+            nearTalkNpcRef.current = nearest
+            setNearTalkNpc(nearest)
+          } else if (nearest) {
+            nearTalkNpcRef.current = nearest
+          }
+          if (nearest) {
+            const uv = scene.projectHeadScreen(nearest.id)
+            if (
+              uv &&
+              (!lastPromptUv ||
+                Math.abs(uv.x - lastPromptUv.x) > 0.002 ||
+                Math.abs(uv.y - lastPromptUv.y) > 0.002)
+            ) {
+              lastPromptUv = uv
+              setNpcPromptPos(uv)
+            } else if (!uv && lastPromptUv) {
+              lastPromptUv = null
+              setNpcPromptPos(null)
+            }
+          } else if (lastPromptUv || prev) {
+            lastPromptUv = null
+            setNpcPromptPos(null)
+          }
+        }
+      } else if (!affordancesClearedForTalk) {
+        affordancesClearedForTalk = true
+        if (nearTalkNpcRef.current) {
+          nearTalkNpcRef.current = null
+          setNearTalkNpc(null)
+        }
+        if (lastPromptUv) {
+          lastPromptUv = null
+          setNpcPromptPos(null)
+        }
+        if (lastHoverId) {
+          lastHoverId = null
+          lastHoverUv = null
+          setHoverTalkNpc(null)
+          setNpcHoverPos(null)
+          canvas.style.cursor = ''
+        }
+      }
+
       const levels = voiceMonitorRef.current.sample()
       speakingLevelsRef.current = levels
       scene.applySpeakingLevels(levels, session.id)
@@ -1066,11 +1262,94 @@ export function WorldView() {
       raf = requestAnimationFrame(tick)
     }
 
+    const onPointerMove = (e: PointerEvent) => {
+      if (npcTalkRef.current) {
+        if (lastHoverId) {
+          lastHoverId = null
+          lastHoverUv = null
+          setHoverTalkNpc(null)
+          setNpcHoverPos(null)
+          canvas.style.cursor = ''
+        }
+        return
+      }
+      const rect = canvas.getBoundingClientRect()
+      const cssX = e.clientX - rect.left
+      const cssY = e.clientY - rect.top
+      const hit = pickInteractableNpcAtScreen(
+        peersRef.current,
+        (id) => scene.projectHeadScreen(id),
+        cssX,
+        cssY,
+        rect.width,
+        rect.height,
+      )
+      const hitId = hit?.id ?? null
+      if (hitId !== lastHoverId) {
+        lastHoverId = hitId
+        setHoverTalkNpc(hit)
+        canvas.style.cursor = hit ? 'pointer' : ''
+      }
+      if (hit) {
+        const uv = scene.projectHeadScreen(hit.id)
+        if (
+          uv &&
+          (!lastHoverUv ||
+            Math.abs(uv.x - lastHoverUv.x) > 0.002 ||
+            Math.abs(uv.y - lastHoverUv.y) > 0.002)
+        ) {
+          lastHoverUv = uv
+          setNpcHoverPos(uv)
+        } else if (!uv && lastHoverUv) {
+          lastHoverUv = null
+          setNpcHoverPos(null)
+        }
+      } else if (lastHoverUv) {
+        lastHoverUv = null
+        setNpcHoverPos(null)
+      }
+    }
+
+    const onPointerLeave = () => {
+      if (!lastHoverId && !lastHoverUv) return
+      lastHoverId = null
+      lastHoverUv = null
+      setHoverTalkNpc(null)
+      setNpcHoverPos(null)
+      canvas.style.cursor = ''
+    }
+
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.button !== 0 || npcTalkRef.current) return
+      if (isTextInputTarget(e.target)) return
+      const rect = canvas.getBoundingClientRect()
+      const cssX = e.clientX - rect.left
+      const cssY = e.clientY - rect.top
+      const hit = pickInteractableNpcAtScreen(
+        peersRef.current,
+        (id) => scene.projectHeadScreen(id),
+        cssX,
+        cssY,
+        rect.width,
+        rect.height,
+      )
+      if (!hit) return
+      e.preventDefault()
+      startNpcTalkRef.current(hit)
+    }
+
+    canvas.addEventListener('pointermove', onPointerMove)
+    canvas.addEventListener('pointerleave', onPointerLeave)
+    canvas.addEventListener('pointerdown', onPointerDown)
+
     raf = requestAnimationFrame(tick)
     return () => {
       cancelAnimationFrame(raf)
       window.removeEventListener('resize', resize)
       wrap.removeEventListener('wheel', onWheel)
+      canvas.removeEventListener('pointermove', onPointerMove)
+      canvas.removeEventListener('pointerleave', onPointerLeave)
+      canvas.removeEventListener('pointerdown', onPointerDown)
       scene.dispose()
       sceneRef.current = null
     }
@@ -1522,12 +1801,45 @@ export function WorldView() {
           onDone={(id) => setFloatEmojis((prev) => prev.filter((e) => e.id !== id))}
         />
         <FishingCatchOverlay catchItem={fishCatch} />
-        {nearWater && !fishingActive && fgRole === 'none' && (
+        {nearWater && !fishingActive && fgRole === 'none' && !npcTalk && (
           <div className="world__fish-hint">กด F เพื่อตกปลา</div>
         )}
         {fishingActive && !fishCatch && (
           <div className="world__fish-hint is-wait">กำลังรอปลากัด… ดูทุ่นบนน้ำ</div>
         )}
+        {nearTalkNpc && npcPromptPos && !npcTalk && (
+          <div
+            className="world__npc-prompt"
+            style={{ left: `${npcPromptPos.x * 100}%`, top: `${npcPromptPos.y * 100}%` }}
+          >
+            กด T เพื่อคุยกับ{actorLabel(nearTalkNpc)}
+          </div>
+        )}
+        {hoverTalkNpc && npcHoverPos && !npcTalk && (
+          <div
+            className="world__npc-chat-icon"
+            style={{ left: `${npcHoverPos.x * 100}%`, top: `${npcHoverPos.y * 100}%` }}
+            aria-hidden="true"
+          />
+        )}
+        <NpcDialoguePanel
+          open={!!npcTalk}
+          npcName={npcTalk?.npcName ?? ''}
+          text={npcTalk?.text ?? ''}
+          choices={npcTalk?.choices ?? []}
+          streaming={npcTalk?.streaming}
+          onChoose={(optionId) => {
+            const talk = npcTalkRef.current
+            if (!talk) return
+            setNpcTalk((prev) => (prev ? { ...prev, choices: [], streaming: true } : prev))
+            netRef.current?.send({
+              type: 'interact-choose',
+              sessionId: talk.sessionId,
+              optionId,
+            })
+          }}
+          onClose={() => endNpcTalkRef.current()}
+        />
         {roomId === FALLGUYS_ROOM_ID && fgRole === 'none' && fgRacePhase !== 'racing' && (
           <div className="world__fg-lobby">
             <strong>Fall Guys Arena</strong>

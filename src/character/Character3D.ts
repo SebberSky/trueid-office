@@ -113,6 +113,11 @@ export class Character3D {
   private static readonly POISON_HOLD = 5
   private static readonly POISON_COLOR = new THREE.Color(0x4a0e6b)
 
+  /** Nameplate text color — override in subclasses (e.g. NPC red). */
+  protected get nameplateColor(): string {
+    return '#fff'
+  }
+
   constructor(look: CharacterLook) {
     this.root.add(this.body)
 
@@ -126,7 +131,7 @@ export class Character3D {
     }
 
     this.labelName = (look.displayName || 'guest').slice(0, 10)
-    this.label = makeNameSprite(this.labelName, false)
+    this.label = makeNameSprite(this.labelName, false, this.nameplateColor)
     this.labelBaseY = labelYFor(this.animalKind, this.gait)
     this.label.position.y = this.labelBaseY
     this.root.add(this.label)
@@ -591,7 +596,7 @@ export class Character3D {
     ;(this.label.material as THREE.SpriteMaterial).map?.dispose()
     this.labelName = clipped
     this.labelVoiceOn = voiceOn
-    this.label = makeNameSprite(clipped, voiceOn)
+    this.label = makeNameSprite(clipped, voiceOn, this.nameplateColor)
     this.label.position.y = y
     this.root.add(this.label)
   }
@@ -1584,7 +1589,7 @@ function addHairBlocks(head: THREE.Group, look: CharacterLook) {
   head.add(sides)
 }
 
-function makeNameSprite(name: string, voiceOn = false) {
+function makeNameSprite(name: string, voiceOn = false, textColor = '#fff') {
   const canvas = document.createElement('canvas')
   canvas.width = 384
   canvas.height = 96
@@ -1616,7 +1621,7 @@ function makeNameSprite(name: string, voiceOn = false) {
   ctx.lineWidth = 2
   ctx.stroke()
 
-  ctx.fillStyle = '#fff'
+  ctx.fillStyle = textColor
   ctx.textAlign = 'center'
   ctx.textBaseline = 'middle'
   ctx.fillText(label, 192, 49)
@@ -1644,4 +1649,11 @@ function shade(hexColor: string, amount: number) {
   const g = Math.min(255, Math.max(0, ((num >> 8) & 0xff) + amount))
   const b = Math.min(255, Math.max(0, (num & 0xff) + amount))
   return `#${((r << 16) | (g << 8) | b).toString(16).padStart(6, '0')}`
+}
+
+/** NPC avatar — red nameplate to match red minimap points. */
+export class NpcCharacter3D extends Character3D {
+  protected override get nameplateColor(): string {
+    return '#f87171'
+  }
 }
