@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiRequestError,
+  assertSafeOutboundUrl,
   requestCached,
   requestText,
   resetApiCache,
@@ -14,6 +15,37 @@ function jsonResponse(body: unknown, ok = true, status = 200): Response {
 
 beforeEach(() => {
   resetApiCache()
+})
+
+describe('assertSafeOutboundUrl', () => {
+  it('allows public https URLs', () => {
+    expect(assertSafeOutboundUrl('https://api.example.com/v1').hostname).toBe('api.example.com')
+  })
+
+  it('rejects non-https, credentials, and private hosts', () => {
+    expect(() => assertSafeOutboundUrl('http://api.example.com')).toThrow(/https/)
+    expect(() => assertSafeOutboundUrl('https://user:pass@api.example.com')).toThrow(/credentials/)
+    expect(() => assertSafeOutboundUrl('https://localhost/x')).toThrow(/not allowed/)
+    expect(() => assertSafeOutboundUrl('https://127.0.0.1/x')).toThrow(/not allowed/)
+    expect(() => assertSafeOutboundUrl('https://10.0.0.5/x')).toThrow(/not allowed/)
+    expect(() => assertSafeOutboundUrl('https://192.168.1.1/x')).toThrow(/not allowed/)
+    expect(() => assertSafeOutboundUrl('https://169.254.169.254/latest')).toThrow(/not allowed/)
+    expect(() => assertSafeOutboundUrl('https://[::1]/')).toThrow(/not allowed/)
+  })
+
+  it('blocks private hosts before fetch runs', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ ok: 1 }))
+    await expect(
+      requestText({ url: 'https://127.0.0.1/secret' }, { fetchImpl }),
+    ).rejects.toThrow(/not allowed/)
+    expect(fetchImpl).not.toHaveBeenCalled()
+  })
+
+  it('passes redirect: error to the fetch implementation', async () => {
+    const fetchImpl = vi.fn(async () => jsonResponse({ ok: 1 }))
+    await requestText({ url: 'https://api.test/data' }, { fetchImpl })
+    expect(fetchImpl.mock.calls[0]![1].redirect).toBe('error')
+  })
 })
 
 describe('requestText', () => {

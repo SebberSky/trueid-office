@@ -11,7 +11,7 @@ export type {
 export type { GoogleSheetSourceConfig, SheetTable } from './googleSheet'
 export type { ApiRequestConfig, FetchLike, RequestOptions } from './http'
 export type { HttpApiSourceConfig } from './httpApi'
-export { ApiRequestError, requestCached, requestText, resetApiCache } from './http'
+export { ApiRequestError, assertSafeOutboundUrl, requestCached, requestText, resetApiCache } from './http'
 export { fetchHttpApiVars, getPath, httpApiVars } from './httpApi'
 export {
   applyTemplate,

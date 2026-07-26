@@ -357,7 +357,7 @@ describe('InteractEngine api nodes', () => {
     expect(msgs.some((m) => m.type === 'interact-ended')).toBe(false)
   })
 
-  it('falls back to onError.text and keeps the session alive', async () => {
+  it('falls back to onError.text through applyTemplate and keeps the session alive', async () => {
     vi.stubGlobal(
       'fetch',
       vi.fn(async () => {
@@ -366,14 +366,16 @@ describe('InteractEngine api nodes', () => {
     )
 
     const engine = new InteractEngine(
-      new NpcRuntime(map, [reporterNpc({ text: 'แฟ้มหายไปแล้ว' })]),
+      new NpcRuntime(map, [
+        reporterNpc({ text: 'แฟ้มหายไปแล้ว คุณ{displayName}' }),
+      ]),
     )
     const msgs: ServerMsg[] = []
     await startAndChoose(engine, msgs)
 
     const last = msgs.filter((m) => m.type === 'npc-dialogue').at(-1)
     if (last?.type !== 'npc-dialogue') throw new Error('no dialogue')
-    expect(last.text).toBe('แฟ้มหายไปแล้ว')
+    expect(last.text).toBe('แฟ้มหายไปแล้ว คุณเจษ')
     expect(last.choices).toHaveLength(1)
     expect(msgs.some((m) => m.type === 'interact-ended')).toBe(false)
     expect(engine.sessions.getByUser('user-1')).toBeDefined()

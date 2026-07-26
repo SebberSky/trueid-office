@@ -1,7 +1,7 @@
 import { defineNpc } from '../define'
 import type { InteractConfig } from '../interact/types'
 
-/** Public demo sheet — monthly subscriber report the แม่บ้าน "found" on a desk. */
+/** Public synthetic demo sheet — not real business metrics. */
 const REPORT_SHEET_ID = '1wfAaSKJviI4K8MfTHGXRbVcyoMIPgl5_JA1H6flYx4w'
 
 const reportFields = {

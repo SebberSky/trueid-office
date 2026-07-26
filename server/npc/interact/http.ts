@@ -54,6 +54,57 @@ function bodyInit(body: ApiRequestConfig['body']): string | undefined {
   return typeof body === 'string' ? body : JSON.stringify(body)
 }
 
+function isPrivateIpv4(hostname: string): boolean {
+  const m = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(hostname)
+  if (!m) return false
+  const octets = m.slice(1).map(Number)
+  if (octets.some((n) => n > 255)) return true
+  const [a, b] = octets as [number, number, number, number]
+  if (a === 0 || a === 10 || a === 127) return true
+  if (a === 169 && b === 254) return true // link-local / cloud metadata
+  if (a === 172 && b >= 16 && b <= 31) return true
+  if (a === 192 && b === 168) return true
+  if (a === 100 && b >= 64 && b <= 127) return true // CGNAT
+  return false
+}
+
+function isBlockedHostname(hostname: string): boolean {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
+    return true
+  }
+  if (host.includes(':')) {
+    // IPv6 literals — block loopback, link-local, unique-local.
+    if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true
+    if (host.startsWith('fe80:') || /^(fc|fd)[0-9a-f]{0,2}:/i.test(host)) return true
+  }
+  return isPrivateIpv4(host)
+}
+
+/**
+ * Outbound safety for script-configured URLs: HTTPS only, no credentials,
+ * and no private/link-local/metadata hosts. Redirects are disabled so a
+ * public URL cannot bounce into the intranet.
+ */
+export function assertSafeOutboundUrl(raw: string): URL {
+  let parsed: URL
+  try {
+    parsed = new URL(raw)
+  } catch (err) {
+    throw new ApiRequestError('api url is invalid', undefined, err)
+  }
+  if (parsed.protocol !== 'https:') {
+    throw new ApiRequestError(`api url must use https (got ${parsed.protocol})`)
+  }
+  if (parsed.username || parsed.password) {
+    throw new ApiRequestError('api url must not include credentials')
+  }
+  if (isBlockedHostname(parsed.hostname)) {
+    throw new ApiRequestError(`api host is not allowed (${parsed.hostname || 'empty'})`)
+  }
+  return parsed
+}
+
 function cacheKey(config: ApiRequestConfig): string {
   return [
     config.method ?? 'GET',
@@ -86,11 +137,14 @@ export async function requestText(
   }
 
   try {
-    const res = await fetchImpl(config.url, {
+    const safeUrl = assertSafeOutboundUrl(config.url)
+    const res = await fetchImpl(safeUrl.toString(), {
       method: config.method ?? 'GET',
       headers,
       body,
       signal: controller.signal,
+      // Prevent open redirects from a public host into private networks.
+      redirect: 'error',
     })
     if (!res.ok) {
       throw new ApiRequestError(`api responded ${res.status}`, res.status)

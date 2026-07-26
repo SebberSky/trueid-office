@@ -4,8 +4,10 @@ import { inInteractRange } from '../../../shared/npcInteract'
 import type { NpcRuntime } from '../runtime'
 import type { NpcScript } from '../define'
 import {
+  applyTemplate,
   choiceLabels,
   choiceMeta,
+  contextVars,
   nextNodeIdForChoice,
   resolveContentNode,
 } from './dialogue'
@@ -233,7 +235,10 @@ export class InteractEngine {
         script,
         node,
         {
-          text: node.onError?.text ?? FALLBACK_TEXT,
+          text: applyTemplate(
+            node.onError?.text ?? FALLBACK_TEXT,
+            contextVars(session.context),
+          ),
           choices: choiceLabels(node),
           nodeId: node.id,
           end: false,
