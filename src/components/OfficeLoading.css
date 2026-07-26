@@ -1,0 +1,29 @@
+.office-loading {
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 0.85rem;
+  min-height: 100vh;
+  padding: 1.5rem;
+  background: linear-gradient(180deg, #8eb8d8 0%, #a8cce0 42%, #6aa85c 42%, #5a9e4a 100%);
+}
+
+.office-loading__cast {
+  width: min(200px, 46vw);
+  height: min(200px, 46vw);
+  image-rendering: pixelated;
+  background: rgba(15, 23, 42, 0.08);
+  border: 3px solid rgba(15, 23, 42, 0.28);
+  border-radius: 14px;
+  box-shadow: 4px 4px 0 rgba(15, 23, 42, 0.16);
+}
+
+.office-loading__label {
+  margin: 0;
+  font-family: var(--font-display);
+  font-weight: 800;
+  font-size: 1.15rem;
+  letter-spacing: -0.02em;
+  color: #0f172a;
+  text-shadow: 1px 1px 0 rgba(255, 255, 255, 0.35);
+}

@@ -2,6 +2,7 @@ import { lazy, Suspense, useEffect, useState } from 'react'
 import { useAppStore } from './store'
 import { Login } from './components/Login'
 import { CharacterCreator } from './components/CharacterCreator'
+import { OfficeLoading } from './components/OfficeLoading'
 
 const WorldView = lazy(() =>
   import('./components/WorldView').then((m) => ({ default: m.WorldView })),
@@ -29,7 +30,7 @@ export default function App() {
           className={screen === 'world' ? 'app-world' : 'app-world is-suspended'}
           aria-hidden={screen !== 'world'}
         >
-          <Suspense fallback={<div className="app-loading">กำลังโหลดออฟฟิศ…</div>}>
+          <Suspense fallback={<OfficeLoading />}>
             <WorldView />
           </Suspense>
         </div>

@@ -11,9 +11,134 @@
       href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500;12..96,700;12..96,800&family=Karla:wght@400;500;600;700&display=swap"
       rel="stylesheet"
     />
+    <style>
+      /* Boot splash — shown until React mounts over #root (not a data-loading screen). */
+      .boot-splash {
+        position: fixed;
+        inset: 0;
+        z-index: 0;
+        display: grid;
+        place-items: center;
+        overflow: hidden;
+        background: linear-gradient(180deg, #8eb8d8 0%, #a8cce0 42%, #6aa85c 42%, #5a9e4a 100%);
+        font-family: 'Bricolage Grotesque', system-ui, sans-serif;
+        color: #0f172a;
+      }
+      .boot-splash__sky {
+        position: absolute;
+        inset: 0 0 55% 0;
+        background:
+          radial-gradient(ellipse 40% 50% at 78% 32%, rgba(255, 255, 255, 0.5), transparent 60%),
+          radial-gradient(ellipse 28% 34% at 18% 58%, rgba(255, 255, 255, 0.3), transparent 55%);
+        pointer-events: none;
+      }
+      .boot-splash__grid {
+        position: absolute;
+        inset: 42% 0 0 0;
+        background-image:
+          linear-gradient(rgba(30, 60, 30, 0.14) 2px, transparent 2px),
+          linear-gradient(90deg, rgba(30, 60, 30, 0.14) 2px, transparent 2px);
+        background-size: 32px 32px;
+        opacity: 0.55;
+        pointer-events: none;
+      }
+      .boot-splash__scene {
+        position: relative;
+        z-index: 1;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 1.25rem;
+        padding: 1.5rem;
+        text-align: center;
+        animation: boot-rise 0.7s ease both;
+      }
+      .boot-splash__building {
+        width: min(220px, 56vw);
+        height: auto;
+        image-rendering: pixelated;
+        border: 3px solid rgba(15, 23, 42, 0.35);
+        box-shadow: 6px 6px 0 rgba(15, 23, 42, 0.18);
+        background: #8eb8d8;
+      }
+      .boot-splash__brand {
+        margin: 0;
+        font-weight: 800;
+        font-size: clamp(2.4rem, 8vw, 4rem);
+        line-height: 0.92;
+        letter-spacing: -0.04em;
+        text-shadow: 2px 2px 0 rgba(255, 255, 255, 0.35);
+      }
+      .boot-splash__brand span {
+        display: block;
+        color: #c8102e;
+      }
+      .boot-splash__tag {
+        margin: 0;
+        font-family: Karla, system-ui, sans-serif;
+        font-size: 1.05rem;
+        font-weight: 600;
+        color: #1e293b;
+        max-width: 18rem;
+      }
+      .boot-splash__dots {
+        display: flex;
+        gap: 0.45rem;
+        margin-top: 0.35rem;
+      }
+      .boot-splash__dots i {
+        width: 10px;
+        height: 10px;
+        border-radius: 2px;
+        background: #c8102e;
+        animation: boot-dot 1s ease-in-out infinite;
+      }
+      .boot-splash__dots i:nth-child(2) {
+        background: #1a9b8e;
+        animation-delay: 0.15s;
+      }
+      .boot-splash__dots i:nth-child(3) {
+        background: #0f172a;
+        animation-delay: 0.3s;
+      }
+      @keyframes boot-rise {
+        from {
+          opacity: 0;
+          transform: translateY(14px) scale(0.98);
+        }
+        to {
+          opacity: 1;
+          transform: none;
+        }
+      }
+      @keyframes boot-dot {
+        0%,
+        100% {
+          transform: translateY(0);
+          opacity: 0.45;
+        }
+        50% {
+          transform: translateY(-7px);
+          opacity: 1;
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-splash" role="presentation" aria-hidden="true">
+        <div class="boot-splash__sky"></div>
+        <div class="boot-splash__grid"></div>
+        <div class="boot-splash__scene">
+          <img class="boot-splash__building" src="/favicon.svg" width="220" height="220" alt="" />
+          <h1 class="boot-splash__brand">TrueID <span>Office</span></h1>
+          <p class="boot-splash__tag">Virtual workspace — เดินคุย แชร์จอ ในออฟฟิศบล็อก</p>
+          <div class="boot-splash__dots" aria-hidden="true">
+            <i></i><i></i><i></i>
+          </div>
+        </div>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

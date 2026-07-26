@@ -43,15 +43,6 @@ input:focus-visible {
   outline-offset: 2px;
 }
 
-.app-loading {
-  display: grid;
-  place-items: center;
-  min-height: 100vh;
-  font-family: var(--font-display);
-  font-weight: 700;
-  color: var(--ink-soft);
-}
-
 .app-world {
   min-height: 100vh;
 }
