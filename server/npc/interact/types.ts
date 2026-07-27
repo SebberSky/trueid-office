@@ -1,3 +1,6 @@
+import type { GoogleSheetSourceConfig } from './googleSheet'
+import type { HttpApiSourceConfig } from './httpApi'
+
 /** Server-built actor context for dialogue templates / future providers. */
 export type InteractContext = {
   actor: {
@@ -13,22 +16,34 @@ export type InteractContext = {
 
 /**
  * Reply source for a dialogue node.
- * Phase 2 only executes `scripted`. `api` / `llm` are reserved for Phase 3+.
+ * `scripted` and `api` execute; `llm` is still a stub.
  */
 export type ReplySourceRef =
   | { type: 'scripted' }
   | {
       type: 'api'
-      /** e.g. 'google-sheet' — wired in Phase 3 */
-      provider: string
-      /** Provider-specific config (sheet id, range, field map, …) */
-      config?: Record<string, unknown>
+      provider: 'google-sheet'
+      config: GoogleSheetSourceConfig
+    }
+  | {
+      type: 'api'
+      /** Any JSON endpoint, any HTTP method. */
+      provider: 'http'
+      config: HttpApiSourceConfig
     }
   | {
       type: 'llm'
       persona?: string
       config?: Record<string, unknown>
     }
+
+/** Where a node goes when its reply source fails. */
+export type DialogueErrorFallback = {
+  /** In-character line shown in place of the data. */
+  text?: string
+  /** Static node to jump to instead of showing `text`. */
+  next?: string
+}
 
 export type DialogueChoice = {
   id: string
@@ -51,6 +66,10 @@ export type DialogueNode = {
   next?: string
   /** Defaults to scripted when omitted. */
   source?: ReplySourceRef
+  /** Spinner caption while this node resolves (async sources only). */
+  loadingLabel?: string
+  /** Recovery path when the reply source throws — session stays alive. */
+  onError?: DialogueErrorFallback
   /** Terminal node — no further choices; client may close after reading. */
   end?: boolean
 }

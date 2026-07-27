@@ -71,18 +71,30 @@ describe('nearestInteractableNpc', () => {
 })
 
 describe('pickInteractableNpcAtScreen', () => {
-  it('picks nearest projected interactable head', () => {
+  it('picks nearest projected interactable avatar capsule', () => {
     const peers: ActorPresence[] = [
       npc({ id: 'npc:far', npcKey: 'far', x: 0, y: 0, interactable: true }),
       npc({ id: 'npc:near', npcKey: 'near', x: 0, y: 0, interactable: true }),
       npc({ id: 'npc:off', npcKey: 'off', x: 0, y: 0, interactable: false }),
     ]
     const project = (id: string) => {
-      if (id === 'npc:near') return { x: 0.5, y: 0.5 }
-      if (id === 'npc:far') return { x: 0.9, y: 0.9 }
-      return { x: 0.51, y: 0.51 }
+      if (id === 'npc:near') return { top: { x: 0.5, y: 0.4 }, bottom: { x: 0.5, y: 0.6 } }
+      if (id === 'npc:far') return { top: { x: 0.9, y: 0.8 }, bottom: { x: 0.9, y: 0.95 } }
+      return { top: { x: 0.51, y: 0.41 }, bottom: { x: 0.51, y: 0.61 } }
     }
-    const hit = pickInteractableNpcAtScreen(peers, project, 400, 300, 800, 600, 80)
+    // Pointer on near NPC body (mid-torso), not nameplate
+    const hit = pickInteractableNpcAtScreen(peers, project, 400, 300, 800, 600)
     expect(hit?.id).toBe('npc:near')
+  })
+
+  it('hits body below nameplate, not only the head', () => {
+    const peers: ActorPresence[] = [
+      npc({ id: 'npc:a', npcKey: 'a', x: 0, y: 0, interactable: true }),
+    ]
+    const project = () => ({ top: { x: 0.5, y: 0.35 }, bottom: { x: 0.5, y: 0.7 } })
+    // Mid-body: y=0.52 of 600 = 312
+    expect(pickInteractableNpcAtScreen(peers, project, 400, 312, 800, 600)?.id).toBe('npc:a')
+    // Far beside body
+    expect(pickInteractableNpcAtScreen(peers, project, 520, 312, 800, 600)).toBeNull()
   })
 })

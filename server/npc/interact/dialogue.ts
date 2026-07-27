@@ -50,3 +50,46 @@ export function nextNodeIdForChoice(node: DialogueNode, optionId: string): strin
   if (!choice.next) return null
   return choice.next
 }
+
+export type ChoiceMeta = {
+  responseMode: 'immediate' | 'async'
+  /** Spinner caption from the async destination node, when it sets one. */
+  loadingLabel?: string
+}
+
+/**
+ * How a choice will resolve, plus the caption to show while it does.
+ * Random pools count as async when any branch is async, so the UI never
+ * looks interactive while a fetch is in flight.
+ */
+export function choiceMeta(
+  config: InteractConfig,
+  node: DialogueNode,
+  optionId: string,
+): ChoiceMeta {
+  const nextId = nextNodeIdForChoice(node, optionId)
+  if (!nextId) return { responseMode: 'immediate' }
+
+  const pending = [nextId]
+  const visited = new Set<string>()
+  while (pending.length > 0) {
+    const id = pending.pop()
+    if (!id || visited.has(id)) continue
+    visited.add(id)
+    const target = config.nodes[id]
+    if (!target) continue
+    if (target.source?.type === 'api') {
+      return { responseMode: 'async', loadingLabel: target.loadingLabel }
+    }
+    if (target.randomFrom?.length) pending.push(...target.randomFrom)
+  }
+  return { responseMode: 'immediate' }
+}
+
+export function choiceResponseMode(
+  config: InteractConfig,
+  node: DialogueNode,
+  optionId: string,
+): 'immediate' | 'async' {
+  return choiceMeta(config, node, optionId).responseMode
+}

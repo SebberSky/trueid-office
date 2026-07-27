@@ -1,9 +1,24 @@
 import { defineNpc } from '../define'
 import type { InteractConfig } from '../interact/types'
 
+/** Public synthetic demo sheet — not real business metrics. */
+const REPORT_SHEET_ID = '1wfAaSKJviI4K8MfTHGXRbVcyoMIPgl5_JA1H6flYx4w'
+
+const reportFields = {
+  month: 'Month',
+  newSubs: 'New Subscribers',
+  cancelled: 'Cancelled',
+  netGrowth: 'Net Growth',
+  active: 'Active Subscribers',
+  conversion: 'Conversion Rate',
+  churn: 'Churn Rate',
+  mrr: 'MRR (USD)',
+  arpu: 'ARPU (USD)',
+}
+
 /**
- * Mixed dialogue demo: hub menu + linear gossip chain + random one-liners.
- * Phase 3 can attach `source: { type: 'api', provider: 'google-sheet', ... }` on a node.
+ * Mixed dialogue demo: hub menu + linear gossip chain + random one-liners,
+ * plus a data-backed branch that reads a live Google Sheet report.
  */
 const janitorInteract: InteractConfig = {
   startNode: 'hub',
@@ -15,6 +30,69 @@ const janitorInteract: InteractConfig = {
         { id: 'random', label: 'ขอเรื่องสุ่มหน่อยสิ', next: 'random_pool' },
         { id: 'story', label: 'เล่าเรื่องออฟฟิศให้ฟังยาวๆ', next: 'linear_1' },
         { id: 'topics', label: 'เลือกเรื่องเอง', next: 'topics' },
+        { id: 'leak', label: 'ได้ยินว่าเธอเห็นแฟ้มลับของบริษัท…', next: 'leak_tease' },
+        { id: 'bye', label: 'ลาก่อน' },
+      ],
+    },
+    leak_tease: {
+      id: 'leak_tease',
+      say: 'ชู่ว์… เบาเสียงหน่อยคุณ{displayName}! เมื่อเช้าแม่บ้านเก็บกวาดห้องประชุมใหญ่ แล้วเจอแฟ้มรายงานยอดสมาชิกวางทิ้งไว้บนโต๊ะ ยังไม่ได้เอาไปคืนเลย… อยากรู้มั้ยล่ะ?',
+      choices: [
+        { id: 'latest', label: 'ขอดูเดือนล่าสุดพอ', next: 'leak_latest' },
+        { id: 'all', label: 'ขอดูทุกเดือนเลย', next: 'leak_all' },
+        { id: 'hub', label: 'ไม่ดีกว่า เดี๋ยวโดนไล่ออก', next: 'hub' },
+      ],
+    },
+    leak_latest: {
+      id: 'leak_latest',
+      source: {
+        type: 'api',
+        provider: 'google-sheet',
+        config: {
+          sheetId: REPORT_SHEET_ID,
+          row: 'last',
+          fields: reportFields,
+        },
+      },
+      loadingLabel: 'กำลังแอบเปิดแฟ้ม…',
+      say: 'เอ้า ฟังนะ… เดือน {month} มีสมาชิกใหม่ {newSubs} คน ยกเลิกไป {cancelled} คน สุทธิโตขึ้น {netGrowth} คน ตอนนี้มีสมาชิกใช้งานอยู่ {active} คน\nรายได้ต่อเดือน {mrr} ดอลลาร์ เฉลี่ยหัวละ {arpu} ดอลลาร์ อัตราปิดการขาย {conversion} ส่วนคนหนีไป {churn}\n…แม่บ้านอ่านไม่ค่อยออกหรอกนะ แต่ตัวเลขมันเยอะดี',
+      onError: {
+        text: 'โอ๊ย… แฟ้มหาย! เมื่อกี้ยังวางอยู่ตรงนี้เลย สงสัยมีคนเอาไปเก็บแล้ว เดี๋ยวมาถามใหม่นะคุณ{displayName}',
+      },
+      choices: [
+        { id: 'all', label: 'ขอดูทุกเดือนด้วย', next: 'leak_all' },
+        { id: 'hub', label: 'กลับเมนู', next: 'hub' },
+        { id: 'bye', label: 'ลาก่อน' },
+      ],
+    },
+    leak_all: {
+      id: 'leak_all',
+      source: {
+        type: 'api',
+        provider: 'google-sheet',
+        config: {
+          sheetId: REPORT_SHEET_ID,
+          fields: reportFields,
+          rowsTemplate: '• {month} — สมาชิกใช้งาน {active} คน (โตสุทธิ {netGrowth}) รายได้ {mrr} ดอลลาร์',
+        },
+      },
+      loadingLabel: 'กำลังแอบถ่ายรูปแฟ้ม…',
+      say: 'แม่บ้านแอบเปิดดูทั้ง {rowCount} เดือนเลยนะ ห้ามบอกใคร!\n{rows}\nเห็นมั้ยล่ะ… ยอดขึ้นทุกเดือนแบบนี้ ปีนี้โบนัสน่าจะดีนะ',
+      onError: {
+        next: 'leak_failed',
+      },
+      choices: [
+        { id: 'latest', label: 'ขอดูเดือนล่าสุดชัดๆ', next: 'leak_latest' },
+        { id: 'hub', label: 'กลับเมนู', next: 'hub' },
+        { id: 'bye', label: 'ลาก่อน' },
+      ],
+    },
+    leak_failed: {
+      id: 'leak_failed',
+      say: 'เอ๊ะ… มีคนเดินมา! แม่บ้านรีบยัดแฟ้มกลับลิ้นชักไปแล้ว ไว้ตอนไม่มีคนค่อยมาใหม่นะคุณ{displayName}',
+      choices: [
+        { id: 'retry', label: 'ลองใหม่อีกที', next: 'leak_tease' },
+        { id: 'hub', label: 'กลับเมนู', next: 'hub' },
         { id: 'bye', label: 'ลาก่อน' },
       ],
     },

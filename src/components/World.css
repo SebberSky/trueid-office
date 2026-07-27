@@ -176,42 +176,30 @@
   animation: fishWaitDot 1.4s ease-out infinite;
 }
 
-.world__npc-prompt {
-  position: absolute;
-  z-index: 7;
-  transform: translate(-50%, calc(-100% - 1.6rem));
-  pointer-events: none;
-  padding: 0.35rem 0.65rem;
-  border-radius: 4px;
-  font-size: 0.78rem;
-  font-weight: 600;
-  color: #f8fafc;
-  background: rgba(15, 23, 42, 0.92);
-  border: 1px solid rgba(248, 250, 252, 0.35);
-  white-space: nowrap;
-  box-shadow: 0 8px 20px rgba(0, 0, 0, 0.35);
-}
-
 .world__npc-chat-icon {
   position: absolute;
   z-index: 8;
-  width: 1.35rem;
-  height: 1.15rem;
-  transform: translate(-50%, calc(-100% - 2.6rem));
+  transform: translate(-50%, calc(-100% - 2.8rem));
   pointer-events: none;
-  border-radius: 0.35rem 0.35rem 0.35rem 0.1rem;
-  background: #f8fafc;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.35);
+  filter: drop-shadow(0 4px 10px rgba(0, 0, 0, 0.45));
+  animation: npcChatIconPop 0.18s ease-out;
 }
 
-.world__npc-chat-icon::after {
-  content: '';
-  position: absolute;
-  left: 0.2rem;
-  bottom: -0.28rem;
-  border: 0.28rem solid transparent;
-  border-top-color: #f8fafc;
-  border-left-width: 0.12rem;
+.world__npc-chat-icon-svg {
+  display: block;
+  width: 2rem;
+  height: 1.75rem;
+}
+
+@keyframes npcChatIconPop {
+  from {
+    opacity: 0;
+    transform: translate(-50%, calc(-100% - 2.4rem)) scale(0.85);
+  }
+  to {
+    opacity: 1;
+    transform: translate(-50%, calc(-100% - 2.8rem)) scale(1);
+  }
 }
 
 @keyframes fishWaitPulse {

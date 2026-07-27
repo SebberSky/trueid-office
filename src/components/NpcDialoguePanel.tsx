@@ -1,6 +1,14 @@
+import { useEffect, useRef } from 'react'
 import './NpcDialoguePanel.css'
 
-export type NpcDialogueChoice = { id: string; label: string }
+export type NpcDialogueChoice = {
+  id: string
+  label: string
+  responseMode?: 'immediate' | 'async'
+  loadingLabel?: string
+}
+
+const DEFAULT_LOADING_LABEL = 'กำลังตอบ…'
 
 type Props = {
   open: boolean
@@ -8,6 +16,7 @@ type Props = {
   text: string
   choices: NpcDialogueChoice[]
   streaming?: boolean
+  pendingChoiceId?: string | null
   onChoose: (optionId: string) => void
   onClose: () => void
 }
@@ -19,9 +28,19 @@ export function NpcDialoguePanel({
   text,
   choices,
   streaming = false,
+  pendingChoiceId = null,
   onChoose,
   onClose,
 }: Props) {
+  const textRef = useRef<HTMLParagraphElement>(null)
+
+  // Streaming: follow the newest line. New static node: start at the top.
+  useEffect(() => {
+    const el = textRef.current
+    if (!el) return
+    el.scrollTop = streaming ? el.scrollHeight : 0
+  }, [text, streaming])
+
   if (!open) return null
 
   return (
@@ -33,7 +52,7 @@ export function NpcDialoguePanel({
             Esc
           </button>
         </div>
-        <p className="npc-dialogue__text">
+        <p className="npc-dialogue__text" ref={textRef}>
           {text}
           {streaming ? <span className="npc-dialogue__cursor" aria-hidden="true" /> : null}
         </p>
@@ -41,9 +60,18 @@ export function NpcDialoguePanel({
           <ul className="npc-dialogue__choices">
             {choices.map((choice, index) => (
               <li key={choice.id}>
-                <button type="button" onClick={() => onChoose(choice.id)}>
+                <button
+                  type="button"
+                  disabled={pendingChoiceId !== null}
+                  onClick={() => onChoose(choice.id)}
+                >
                   <span className="npc-dialogue__idx">{index + 1}.</span>
                   {choice.label}
+                  {pendingChoiceId === choice.id ? (
+                    <span className="npc-dialogue__choice-loading">
+                      {choice.loadingLabel ?? DEFAULT_LOADING_LABEL}
+                    </span>
+                  ) : null}
                 </button>
               </li>
             ))}

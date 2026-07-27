@@ -92,6 +92,9 @@ export class CampusScene {
   private camPanZ = 0
   private readonly headWorld = new THREE.Vector3()
   private readonly headNdc = new THREE.Vector3()
+  private readonly hitTopWorld = new THREE.Vector3()
+  private readonly hitBottomWorld = new THREE.Vector3()
+  private readonly hitNdc = new THREE.Vector3()
   private localFishing: FishingRig | null = null
   private peerFishing = new Map<string, FishingRig>()
   private playerLabelName = ''
@@ -999,6 +1002,32 @@ export class CampusScene {
       x: (this.headNdc.x + 1) / 2,
       y: (-this.headNdc.y + 1) / 2,
     }
+  }
+
+  /**
+   * Project feet→nameplate hit segment to canvas UV (for whole-avatar hover/click).
+   * `who === 'local'` uses the local player; otherwise a peer id.
+   */
+  projectAvatarHitScreen(
+    who: 'local' | string,
+  ): { top: { x: number; y: number }; bottom: { x: number; y: number } } | null {
+    const avatar = who === 'local' ? this.player : this.peers.get(who)
+    if (!avatar) return null
+    avatar.getInteractTopWorld(this.hitTopWorld)
+    this.hitNdc.copy(this.hitTopWorld).project(this.camera)
+    if (this.hitNdc.z > 1) return null
+    const top = {
+      x: (this.hitNdc.x + 1) / 2,
+      y: (-this.hitNdc.y + 1) / 2,
+    }
+    avatar.getInteractBottomWorld(this.hitBottomWorld)
+    this.hitNdc.copy(this.hitBottomWorld).project(this.camera)
+    if (this.hitNdc.z > 1) return null
+    const bottom = {
+      x: (this.hitNdc.x + 1) / 2,
+      y: (-this.hitNdc.y + 1) / 2,
+    }
+    return { top, bottom }
   }
 
   /** Show / hide the local fishing line + bobber toward a pond cast target (pixel coords). */
