@@ -4,6 +4,7 @@
   bottom: 1.1rem;
   z-index: 35;
   width: min(640px, calc(100% - 1.5rem));
+  max-height: calc(100dvh - 2.2rem);
   transform: translateX(-50%);
   pointer-events: none;
 }
@@ -12,7 +13,9 @@
   pointer-events: auto;
   display: flex;
   flex-direction: column;
-  max-height: 40vh;
+  max-height: min(42vh, calc(100dvh - 2.2rem));
+  min-height: 0;
+  overflow: hidden;
   padding: 0.85rem 1rem 0.95rem;
   border: 2px solid rgba(226, 232, 240, 0.55);
   border-radius: 4px;
@@ -49,10 +52,13 @@
 }
 
 .npc-dialogue__text {
+  flex: 1 1 auto;
   margin: 0;
-  min-height: 2.8em;
+  min-height: 0;
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
   scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
   line-height: 1.55;
@@ -76,17 +82,22 @@
   }
 }
 
-/* Choices stay pinned below the scrolling text; scroll themselves only as a last resort. */
+/* Choices stay below text; shrink + scroll when the panel is short or the list is long. */
 .npc-dialogue__choices {
   display: grid;
-  flex-shrink: 0;
+  flex: 0 1 auto;
+  align-content: start;
   gap: 0.35rem;
   margin: 0.75rem 0 0;
   padding: 0;
   list-style: none;
-  max-height: 55%;
+  min-height: 0;
+  /* Use rem/vh — % max-height is unreliable when the parent only has max-height. */
+  max-height: min(14rem, 35vh);
+  overflow-x: hidden;
   overflow-y: auto;
   overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
   scrollbar-width: thin;
   scrollbar-color: rgba(148, 163, 184, 0.5) transparent;
 }
@@ -105,6 +116,12 @@
   font-size: 0.88rem;
   text-align: left;
   cursor: pointer;
+  transform: translateZ(0);
+  transition:
+    background 0.12s ease,
+    border-color 0.12s ease,
+    transform 0.1s ease,
+    box-shadow 0.12s ease;
 }
 
 .npc-dialogue__choices button:hover {
@@ -112,14 +129,38 @@
   border-color: rgba(125, 211, 252, 0.55);
 }
 
+.npc-dialogue__choices button:focus-visible {
+  outline: 2px solid rgba(125, 211, 252, 0.7);
+  outline-offset: 1px;
+}
+
+.npc-dialogue__choices button:active:not(:disabled) {
+  transform: scale(0.985);
+  background: rgba(14, 165, 233, 0.28);
+  border-color: rgba(125, 211, 252, 0.85);
+  box-shadow: inset 0 0 0 1px rgba(125, 211, 252, 0.25);
+}
+
 .npc-dialogue__choices button:disabled {
   cursor: wait;
   opacity: 0.6;
+  transform: none;
+  box-shadow: none;
 }
 
 .npc-dialogue__choices button:disabled:hover {
   background: rgba(14, 165, 233, 0.08);
   border-color: rgba(125, 211, 252, 0.28);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .npc-dialogue__choices button {
+    transition: none;
+  }
+
+  .npc-dialogue__choices button:active:not(:disabled) {
+    transform: none;
+  }
 }
 
 .npc-dialogue__choice-loading {
@@ -154,7 +195,19 @@
 }
 
 .npc-dialogue__hint {
+  flex-shrink: 0;
   margin: 0.65rem 0 0;
   color: #94a3b8;
   font-size: 0.75rem;
+}
+
+@media (max-height: 560px) {
+  .npc-dialogue__chrome {
+    max-height: calc(100dvh - 1.5rem);
+    padding: 0.65rem 0.8rem 0.75rem;
+  }
+
+  .npc-dialogue__choices {
+    max-height: min(11rem, 40vh);
+  }
 }

@@ -41,10 +41,80 @@ describe('assertSafeOutboundUrl', () => {
     expect(fetchImpl).not.toHaveBeenCalled()
   })
 
-  it('passes redirect: error to the fetch implementation', async () => {
+  it('passes redirect: manual to the fetch implementation', async () => {
     const fetchImpl = vi.fn(async () => jsonResponse({ ok: 1 }))
     await requestText({ url: 'https://api.test/data' }, { fetchImpl })
-    expect(fetchImpl.mock.calls[0]![1].redirect).toBe('error')
+    expect(fetchImpl.mock.calls[0]![1].redirect).toBe('manual')
+  })
+
+  it('follows a safe HTTPS redirect and re-validates the next host', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 307,
+        headers: { get: (name: string) => (name === 'location' ? 'https://cdn.test/file.csv' : null) },
+        text: async () => '',
+      } as Response)
+      .mockResolvedValueOnce(jsonResponse({ ok: 1 }))
+
+    const text = await requestText({ url: 'https://api.test/export' }, { fetchImpl })
+    expect(JSON.parse(text)).toEqual({ ok: 1 })
+    expect(fetchImpl).toHaveBeenCalledTimes(2)
+    expect(fetchImpl.mock.calls[1]![0]).toBe('https://cdn.test/file.csv')
+    expect(fetchImpl.mock.calls[1]![1].method).toBe('GET')
+  })
+
+  it('rejects a redirect into a private host', async () => {
+    const fetchImpl = vi.fn(async () => ({
+      ok: false,
+      status: 302,
+      headers: { get: (name: string) => (name === 'location' ? 'https://127.0.0.1/secret' : null) },
+      text: async () => '',
+    }) as Response)
+
+    await expect(requestText({ url: 'https://api.test/export' }, { fetchImpl })).rejects.toThrow(
+      /not allowed/,
+    )
+    expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('resolves relative Location against the previous URL', async () => {
+    const fetchImpl = vi
+      .fn<typeof fetch>()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        headers: { get: (name: string) => (name === 'location' ? '/next.csv' : null) },
+        text: async () => '',
+      } as Response)
+      .mockResolvedValueOnce(jsonResponse({ ok: 1 }))
+
+    await requestText({ url: 'https://api.test/export' }, { fetchImpl })
+    expect(fetchImpl.mock.calls[1]![0]).toBe('https://api.test/next.csv')
+  })
+
+  it('rejects redirects with no Location and caps hop count', async () => {
+    const missing = vi.fn(async () => ({
+      ok: false,
+      status: 302,
+      headers: { get: () => null },
+      text: async () => '',
+    }) as Response)
+    await expect(requestText({ url: 'https://api.test/a' }, { fetchImpl: missing })).rejects.toThrow(
+      /missing location/,
+    )
+
+    const looping = vi.fn(async () => ({
+      ok: false,
+      status: 307,
+      headers: { get: (name: string) => (name === 'location' ? 'https://api.test/loop' : null) },
+      text: async () => '',
+    }) as Response)
+    await expect(requestText({ url: 'https://api.test/start' }, { fetchImpl: looping })).rejects.toThrow(
+      /redirect limit/,
+    )
+    expect(looping.mock.calls.length).toBe(6)
   })
 })
 
