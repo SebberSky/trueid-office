@@ -1,5 +1,7 @@
-import { useState, type FormEvent } from 'react'
+import { useMemo, useState, type FormEvent } from 'react'
 import { useAppStore } from '../store'
+import { readPendingRoomIdFromUrl } from '../world/roomLink'
+import { generateWorld } from '../world/terrain'
 import './Login.css'
 
 export function Login() {
@@ -7,6 +9,11 @@ export function Login() {
   const loginError = useAppStore((s) => s.loginError)
   const loginBusy = useAppStore((s) => s.loginBusy)
   const [email, setEmail] = useState('')
+  const inviteRoomName = useMemo(() => {
+    const id = readPendingRoomIdFromUrl()
+    if (!id) return null
+    return generateWorld(20260717).rooms.find((r) => r.id === id)?.name ?? null
+  }, [])
 
   async function onSubmit(e: FormEvent) {
     e.preventDefault()
@@ -27,6 +34,11 @@ export function Login() {
         <p className="login__tagline">
           เข้าออฟฟิศเสมือนจริง — สร้างตัวละครบล็อกๆ เดินบนแมพ และคุยในห้อง
         </p>
+        {inviteRoomName && (
+          <p className="login__invite" role="status">
+            คุณถูกเชิญเข้าห้อง <strong>{inviteRoomName}</strong> — ล็อกอินแล้วจะพาไปห้องนั้นอัตโนมัติ
+          </p>
+        )}
 
         <form className="login__form" onSubmit={onSubmit}>
           <label htmlFor="email">อีเมลองค์กร</label>

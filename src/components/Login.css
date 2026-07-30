@@ -75,6 +75,23 @@
   animation: rise 0.8s 0.1s ease both;
 }
 
+.login__invite {
+  margin: -0.85rem 0 1.5rem;
+  max-width: 26rem;
+  padding: 0.65rem 0.85rem;
+  border-radius: 10px;
+  background: rgba(26, 155, 142, 0.12);
+  border: 1px solid rgba(26, 155, 142, 0.35);
+  color: #0f766e;
+  font-size: 0.92rem;
+  line-height: 1.45;
+  animation: rise 0.8s 0.12s ease both;
+}
+
+.login__invite strong {
+  font-weight: 700;
+}
+
 .login__form {
   display: flex;
   flex-direction: column;

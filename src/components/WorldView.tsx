@@ -4,6 +4,14 @@ import { useAppStore } from '../store'
 import { TILE, canTraverse, generateWorld, isAtWaterEdge, isUnlimited, nearestWaterCastTarget, pixelCenter, roomAt } from '../world/terrain'
 import { CampusScene } from '../world/CampusScene'
 import { findAdjacentWarpDestination } from '../world/warp'
+import {
+  buildRoomShareUrl,
+  canEnterRoomViaLink,
+  clearRoomQueryFromUrl,
+  findRandomRoomSpawn,
+  jitterSpawnPoint,
+  readPendingRoomIdFromUrl,
+} from '../world/roomLink'
 import { HEARTBEAT_MS, MOVE_SEND_MS, PresenceBus, makeUserPresence } from '../presence/bus'
 import { OfficeSocket } from '../net/OfficeSocket'
 import { RoomMedia } from '../media/RoomMedia'
@@ -99,8 +107,24 @@ export function WorldView() {
   const map = useMemo(() => generateWorld(20260717), [])
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const wrapRef = useRef<HTMLDivElement>(null)
+  const pendingRoomId = useMemo(() => readPendingRoomIdFromUrl(), [])
+  const pendingRoomIdRef = useRef(pendingRoomId)
 
   const initialPose = useMemo(() => {
+    if (pendingRoomId) {
+      const room = map.rooms.find((r) => r.id === pendingRoomId)
+      if (room) {
+        const spawn = findRandomRoomSpawn({
+          map,
+          room,
+          canFly: canFlyOverWater(session.look),
+        })
+        if (spawn) {
+          const dest = jitterSpawnPoint(spawn)
+          return { x: dest.x, y: dest.y, facing: 'down' as Facing }
+        }
+      }
+    }
     if (lastPose) {
       const tx = Math.floor(lastPose.x / TILE)
       const ty = Math.floor(lastPose.y / TILE)
@@ -110,7 +134,7 @@ export function WorldView() {
     }
     const c = pixelCenter(map.spawn.x, map.spawn.y)
     return { x: c.x, y: c.y, facing: 'down' as Facing }
-  }, [map, lastPose, session.look])
+  }, [map, lastPose, session.look, pendingRoomId])
 
   const pos = useRef({ x: initialPose.x, y: initialPose.y })
   const facing = useRef<Facing>(initialPose.facing)
@@ -224,6 +248,8 @@ export function WorldView() {
   const [screenFrom, setScreenFrom] = useState<string | null>(null)
   const [mediaError, setMediaError] = useState<string | null>(null)
   const [shareBlockedOpen, setShareBlockedOpen] = useState(false)
+  const [linkCopied, setLinkCopied] = useState(false)
+  const linkCopiedTimerRef = useRef(0)
   const [globalMsgs, setGlobalMsgs] = useState<ChatMessage[]>([])
   const [roomMsgs, setRoomMsgs] = useState<ChatMessage[]>([])
   /** When in a room, global chat starts collapsed to one preview line. */
@@ -518,6 +544,53 @@ export function WorldView() {
         setPinsByRoom(pins)
         if (msg.fallguysRace) applyFgRaceStateRef.current(msg.fallguysRace)
         if (msg.xoGame) applyXoGameStateRef.current(msg.xoGame)
+
+        const pendingId = pendingRoomIdRef.current
+        if (pendingId && !poseAppliedRef.current) {
+          pendingRoomIdRef.current = null
+          clearRoomQueryFromUrl()
+          const room = map.rooms.find((r) => r.id === pendingId)
+          const canFly = canFlyOverWater(session.look)
+          let placed = false
+          if (room) {
+            const enter = canEnterRoomViaLink({
+              room,
+              peers: peersRef.current,
+              lockedRoomIds: lockedRoomsRef.current,
+            })
+            if (!enter.ok) {
+              setMediaError(
+                enter.reason === 'locked'
+                  ? `ห้อง ${room.name} ถูกล็อกอยู่ — ไม่สามารถเข้าด้วยลิงก์ได้`
+                  : `ห้อง ${room.name} เต็มแล้ว — ไม่สามารถเข้าด้วยลิงก์ได้`,
+              )
+            } else {
+              const alreadyInRoom = roomAt(map, pos.current.x, pos.current.y)?.id === room.id
+              if (alreadyInRoom) {
+                setLastPose({ x: pos.current.x, y: pos.current.y, facing: facing.current })
+                placed = true
+              } else {
+                const spawn = findRandomRoomSpawn({ map, room, canFly })
+                if (spawn) {
+                  const dest = jitterSpawnPoint(spawn)
+                  pos.current.x = dest.x
+                  pos.current.y = dest.y
+                  facing.current = 'down'
+                  setLastPose({ x: dest.x, y: dest.y, facing: 'down' })
+                  placed = true
+                }
+              }
+            }
+          } else {
+            setMediaError('ไม่พบห้องจากลิงก์ที่เปิดมา')
+          }
+          if (placed) {
+            poseAppliedRef.current = true
+            publishRef.current()
+            return
+          }
+        }
+
         if (msg.lastPose && !poseAppliedRef.current) {
           const tx = Math.floor(msg.lastPose.x / TILE)
           const ty = Math.floor(msg.lastPose.y / TILE)
@@ -528,8 +601,18 @@ export function WorldView() {
             setLastPose(msg.lastPose)
             poseAppliedRef.current = true
             publishRef.current()
+            return
           }
-        } else if (!poseAppliedRef.current) {
+        }
+        if (!poseAppliedRef.current) {
+          const c = pixelCenter(map.spawn.x, map.spawn.y)
+          if (pendingId) {
+            pos.current.x = c.x
+            pos.current.y = c.y
+            facing.current = 'down'
+            setLastPose({ x: c.x, y: c.y, facing: 'down' })
+            publishRef.current()
+          }
           poseAppliedRef.current = true
         }
         return
@@ -1696,6 +1779,29 @@ export function WorldView() {
     [map, setLastPose],
   )
 
+  const copyRoomLink = useCallback(() => {
+    if (!roomId) return
+    const url = buildRoomShareUrl(roomId)
+    const done = () => {
+      setLinkCopied(true)
+      if (linkCopiedTimerRef.current) window.clearTimeout(linkCopiedTimerRef.current)
+      linkCopiedTimerRef.current = window.setTimeout(() => setLinkCopied(false), 2000)
+    }
+    if (navigator.clipboard?.writeText) {
+      void navigator.clipboard.writeText(url).then(done).catch(() => {
+        setMediaError('คัดลอกลิงก์ไม่สำเร็จ — คัดลอกจากแถบที่อยู่แทน')
+      })
+      return
+    }
+    setMediaError(`คัดลอกไม่ได้ — ใช้ลิงก์นี้: ${url}`)
+  }, [roomId])
+
+  useEffect(() => {
+    return () => {
+      if (linkCopiedTimerRef.current) window.clearTimeout(linkCopiedTimerRef.current)
+    }
+  }, [])
+
   return (
     <div className="world">
       {serverUpdate && (
@@ -2132,6 +2238,15 @@ export function WorldView() {
                   {roomIsLocked ? '🔓' : '🔒'}
                 </button>
               )}
+              <button
+                type="button"
+                className={linkCopied ? 'on link' : ''}
+                onClick={copyRoomLink}
+                title={linkCopied ? 'คัดลอกลิงก์แล้ว' : 'แชร์ลิงก์ห้อง — คนที่เปิดจะถูกพามาห้องนี้'}
+                aria-label={linkCopied ? 'คัดลอกลิงก์แล้ว' : 'แชร์ลิงก์ห้อง'}
+              >
+                {linkCopied ? '✓' : '🔗'}
+              </button>
               <button
                 type="button"
                 className={wheelOpen ? 'on' : ''}
