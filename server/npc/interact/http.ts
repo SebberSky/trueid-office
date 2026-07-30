@@ -69,6 +69,21 @@ function isPrivateIpv4(hostname: string): boolean {
   return false
 }
 
+/**
+ * Extract an embedded IPv4 from IPv4-mapped IPv6 (`::ffff:127.0.0.1` or
+ * `::ffff:7f00:1`). Returns null when the host is not that form.
+ */
+export function ipv4FromMappedIpv6(hostname: string): string | null {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host)
+  if (dotted) return dotted[1]!
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host)
+  if (!hex) return null
+  const hi = Number.parseInt(hex[1]!, 16)
+  const lo = Number.parseInt(hex[2]!, 16)
+  return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`
+}
+
 function isBlockedHostname(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
   if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
@@ -78,6 +93,9 @@ function isBlockedHostname(hostname: string): boolean {
     // IPv6 literals — block loopback, link-local, unique-local.
     if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true
     if (host.startsWith('fe80:') || /^(fc|fd)[0-9a-f]{0,2}:/i.test(host)) return true
+    // IPv4-mapped IPv6 (`::ffff:127.0.0.1`) must use the same private rules.
+    const mapped = ipv4FromMappedIpv6(host)
+    if (mapped && isPrivateIpv4(mapped)) return true
   }
   return isPrivateIpv4(host)
 }

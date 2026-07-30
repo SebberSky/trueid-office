@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   ApiRequestError,
   assertSafeOutboundUrl,
+  ipv4FromMappedIpv6,
   requestCached,
   requestText,
   resetApiCache,
@@ -31,6 +32,18 @@ describe('assertSafeOutboundUrl', () => {
     expect(() => assertSafeOutboundUrl('https://192.168.1.1/x')).toThrow(/not allowed/)
     expect(() => assertSafeOutboundUrl('https://169.254.169.254/latest')).toThrow(/not allowed/)
     expect(() => assertSafeOutboundUrl('https://[::1]/')).toThrow(/not allowed/)
+  })
+
+  it('rejects IPv4-mapped IPv6 that embed private or metadata addresses', () => {
+    expect(ipv4FromMappedIpv6('::ffff:127.0.0.1')).toBe('127.0.0.1')
+    expect(ipv4FromMappedIpv6('::ffff:7f00:1')).toBe('127.0.0.1')
+    expect(ipv4FromMappedIpv6('::ffff:a9fe:a9fe')).toBe('169.254.169.254')
+    expect(() => assertSafeOutboundUrl('https://[::ffff:127.0.0.1]/')).toThrow(/not allowed/)
+    expect(() => assertSafeOutboundUrl('https://[::ffff:169.254.169.254]/latest')).toThrow(
+      /not allowed/,
+    )
+    expect(() => assertSafeOutboundUrl('https://[::ffff:10.0.0.1]/')).toThrow(/not allowed/)
+    expect(() => assertSafeOutboundUrl('https://[::ffff:7f00:1]/')).toThrow(/not allowed/)
   })
 
   it('blocks private hosts before fetch runs', async () => {
@@ -77,6 +90,35 @@ describe('assertSafeOutboundUrl', () => {
       /not allowed/,
     )
     expect(fetchImpl).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a redirect into IPv4-mapped IPv6 loopback or metadata without a second fetch', async () => {
+    const loopback = vi.fn(async () => ({
+      ok: false,
+      status: 302,
+      headers: {
+        get: (name: string) => (name === 'location' ? 'https://[::ffff:127.0.0.1]/' : null),
+      },
+      text: async () => '',
+    }) as Response)
+    await expect(requestText({ url: 'https://api.test/export' }, { fetchImpl: loopback })).rejects.toThrow(
+      /not allowed/,
+    )
+    expect(loopback).toHaveBeenCalledTimes(1)
+
+    const metadata = vi.fn(async () => ({
+      ok: false,
+      status: 307,
+      headers: {
+        get: (name: string) =>
+          name === 'location' ? 'https://[::ffff:169.254.169.254]/latest' : null,
+      },
+      text: async () => '',
+    }) as Response)
+    await expect(
+      requestText({ url: 'https://api.test/export' }, { fetchImpl: metadata }),
+    ).rejects.toThrow(/not allowed/)
+    expect(metadata).toHaveBeenCalledTimes(1)
   })
 
   it('resolves relative Location against the previous URL', async () => {
