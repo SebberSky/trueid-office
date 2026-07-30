@@ -351,6 +351,12 @@
   color: #fde68a;
 }
 
+.world__controls button.on.link {
+  background: rgba(26, 155, 142, 0.25);
+  border-color: #1a9b8e;
+  color: #99f6e4;
+}
+
 .world__controls button.on.rec {
   background: rgba(220, 38, 38, 0.3);
   border-color: #ef4444;
