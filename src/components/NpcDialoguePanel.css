@@ -98,7 +98,7 @@
   -webkit-overflow-scrolling: touch;
 }
 
-/* Always-visible scrollbars so overflow is obvious and wheel/drag scroll stays usable vs camera zoom. */
+/* Classic (non-overlay) scrollbars when content overflows — easier to find than macOS overlay bars, and safer vs camera zoom. */
 .npc-dialogue__text,
 .npc-dialogue__choices {
   scrollbar-gutter: stable;

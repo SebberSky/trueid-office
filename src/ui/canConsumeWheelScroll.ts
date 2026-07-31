@@ -14,7 +14,9 @@ export type ScrollMetrics = {
   scrollTop: number
 }
 
-/** Whether this box can absorb a vertical wheel delta (not at that edge). */
+/** Whether this box can absorb a vertical wheel delta (not at that edge).
+ * `deltaY > 0` = wheel down / scroll toward bottom (DOM WheelEvent convention).
+ */
 export function canScrollInDirection(metrics: ScrollMetrics, deltaY: number): boolean {
   if (!(metrics.overflowY === 'auto' || metrics.overflowY === 'scroll')) return false
   if (metrics.scrollHeight <= metrics.clientHeight + 1) return false
