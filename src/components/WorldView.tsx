@@ -224,6 +224,7 @@ export function WorldView() {
       responseMode?: 'immediate' | 'async'
       loadingLabel?: string
     }[]
+    nodeId: string | null
     streaming: boolean
     pendingChoiceId: string | null
   }
@@ -693,12 +694,14 @@ export function WorldView() {
       }
       if (msg.type === 'interact-started') {
         npcTalkPendingRef.current = false
+        npcChoicePendingRef.current = false
         setNpcTalk({
           sessionId: msg.sessionId,
           npcId: msg.npcId,
           npcName: msg.displayName,
           text: '',
           choices: [],
+          nodeId: null,
           streaming: true,
           pendingChoiceId: null,
         })
@@ -720,6 +723,7 @@ export function WorldView() {
             ...prev,
             text: msg.text ?? prev.text,
             choices: msg.choices ?? [],
+            nodeId: msg.nodeId ?? prev.nodeId,
             streaming: false,
             pendingChoiceId: null,
           }
@@ -1975,6 +1979,7 @@ export function WorldView() {
           npcName={npcTalk?.npcName ?? ''}
           text={npcTalk?.text ?? ''}
           choices={npcTalk?.choices ?? []}
+          nodeId={npcTalk?.nodeId}
           streaming={npcTalk?.streaming}
           pendingChoiceId={npcTalk?.pendingChoiceId}
           onChoose={(optionId) => {
@@ -1983,9 +1988,10 @@ export function WorldView() {
             const choice = talk.choices.find((candidate) => candidate.id === optionId)
             if (!choice) return
             npcChoicePendingRef.current = true
-            if (choice.responseMode === 'async') {
-              setNpcTalk((prev) => (prev ? { ...prev, pendingChoiceId: optionId } : prev))
-            }
+            // Lock all modes immediately — immediate/random paths used to leave
+            // buttons enabled, so a second click looked required when the first
+            // was in flight (common on hub → random gossip).
+            setNpcTalk((prev) => (prev ? { ...prev, pendingChoiceId: optionId } : prev))
             netRef.current?.send({
               type: 'interact-choose',
               sessionId: talk.sessionId,
