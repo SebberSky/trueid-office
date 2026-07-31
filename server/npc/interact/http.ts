@@ -42,6 +42,7 @@ export class ApiRequestError extends Error {
 
 const DEFAULT_TIMEOUT_MS = 5_000
 const DEFAULT_GET_TTL_MS = 60_000
+const MAX_REDIRECTS = 5
 
 type CacheEntry = { value: unknown; at: number }
 
@@ -68,6 +69,21 @@ function isPrivateIpv4(hostname: string): boolean {
   return false
 }
 
+/**
+ * Extract an embedded IPv4 from IPv4-mapped IPv6 (`::ffff:127.0.0.1` or
+ * `::ffff:7f00:1`). Returns null when the host is not that form.
+ */
+export function ipv4FromMappedIpv6(hostname: string): string | null {
+  const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
+  const dotted = /^::ffff:(\d{1,3}(?:\.\d{1,3}){3})$/.exec(host)
+  if (dotted) return dotted[1]!
+  const hex = /^::ffff:([0-9a-f]{1,4}):([0-9a-f]{1,4})$/.exec(host)
+  if (!hex) return null
+  const hi = Number.parseInt(hex[1]!, 16)
+  const lo = Number.parseInt(hex[2]!, 16)
+  return `${(hi >> 8) & 0xff}.${hi & 0xff}.${(lo >> 8) & 0xff}.${lo & 0xff}`
+}
+
 function isBlockedHostname(hostname: string): boolean {
   const host = hostname.replace(/^\[|\]$/g, '').toLowerCase()
   if (!host || host === 'localhost' || host.endsWith('.localhost') || host.endsWith('.local')) {
@@ -77,14 +93,17 @@ function isBlockedHostname(hostname: string): boolean {
     // IPv6 literals — block loopback, link-local, unique-local.
     if (host === '::1' || host === '0:0:0:0:0:0:0:1') return true
     if (host.startsWith('fe80:') || /^(fc|fd)[0-9a-f]{0,2}:/i.test(host)) return true
+    // IPv4-mapped IPv6 (`::ffff:127.0.0.1`) must use the same private rules.
+    const mapped = ipv4FromMappedIpv6(host)
+    if (mapped && isPrivateIpv4(mapped)) return true
   }
   return isPrivateIpv4(host)
 }
 
 /**
  * Outbound safety for script-configured URLs: HTTPS only, no credentials,
- * and no private/link-local/metadata hosts. Redirects are disabled so a
- * public URL cannot bounce into the intranet.
+ * and no private/link-local/metadata hosts. Redirects are followed manually
+ * so each hop is re-checked (Google Sheet CSV export 307s to googleusercontent).
  */
 export function assertSafeOutboundUrl(raw: string): URL {
   let parsed: URL
@@ -137,19 +156,34 @@ export async function requestText(
   }
 
   try {
-    const safeUrl = assertSafeOutboundUrl(config.url)
-    const res = await fetchImpl(safeUrl.toString(), {
-      method: config.method ?? 'GET',
-      headers,
-      body,
-      signal: controller.signal,
-      // Prevent open redirects from a public host into private networks.
-      redirect: 'error',
-    })
-    if (!res.ok) {
-      throw new ApiRequestError(`api responded ${res.status}`, res.status)
+    let url = assertSafeOutboundUrl(config.url).toString()
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop++) {
+      const isFirst = hop === 0
+      const res = await fetchImpl(url, {
+        // After a redirect, drop method/body/auth so a public host cannot
+        // bounce a privileged POST into another origin.
+        method: isFirst ? (config.method ?? 'GET') : 'GET',
+        headers: isFirst ? headers : {},
+        body: isFirst ? body : undefined,
+        signal: controller.signal,
+        redirect: 'manual',
+      })
+
+      if (res.status >= 300 && res.status < 400) {
+        const location = res.headers.get('location')
+        if (!location) {
+          throw new ApiRequestError('api redirect missing location', res.status)
+        }
+        url = assertSafeOutboundUrl(new URL(location, url).toString()).toString()
+        continue
+      }
+
+      if (!res.ok) {
+        throw new ApiRequestError(`api responded ${res.status}`, res.status)
+      }
+      return await res.text()
     }
-    return await res.text()
+    throw new ApiRequestError('api redirect limit exceeded')
   } catch (err) {
     if (err instanceof ApiRequestError) throw err
     throw new ApiRequestError('api request failed', undefined, err)
