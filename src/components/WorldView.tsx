@@ -24,7 +24,7 @@ import { downloadRecording, ScreenRecorder } from '../media/ScreenRecorder'
 import { GlobalChatBus } from '../chat/GlobalChat'
 import { FLOAT_EMOJIS, RoomActivityBus, type Poll } from '../chat/RoomActivity'
 import type { ChatMessage, DmMessage, PinnedMessage } from '../chat/types'
-import type { Facing, NpcPresence } from '../types'
+import type { CharacterLook, Facing, NpcPresence } from '../types'
 import {
   actorLabel,
   canFlyOverWater,
@@ -216,6 +216,7 @@ export function WorldView() {
     sessionId: string
     npcId: string
     npcName: string
+    look: CharacterLook | null
     text: string
     choices: {
       id: string
@@ -238,6 +239,7 @@ export function WorldView() {
   const endNpcTalkRef = useRef<() => void>(() => {})
   const npcTalkPendingRef = useRef(false)
   const npcChoicePendingRef = useRef(false)
+  const npcTalkLookRef = useRef<{ npcId: string; look: CharacterLook } | null>(null)
 
   const fishTimerRef = useRef<number | null>(null)
   const fishPhaseRef = useRef<'idle' | 'waiting' | 'catch'>('idle')
@@ -376,6 +378,7 @@ export function WorldView() {
     }
     facing.current = facingToward(pos.current.x, pos.current.y, npc.x, npc.y)
     publishRef.current()
+    npcTalkLookRef.current = { npcId: npc.id, look: npc.look }
     npcTalkPendingRef.current = true
     netRef.current?.send({ type: 'interact-start', npcId: npc.id })
   }
@@ -384,6 +387,7 @@ export function WorldView() {
     const talk = npcTalkRef.current
     npcTalkPendingRef.current = false
     npcChoicePendingRef.current = false
+    npcTalkLookRef.current = null
     if (!talk) return
     netRef.current?.send({ type: 'interact-end', sessionId: talk.sessionId })
     setNpcTalk(null)
@@ -692,10 +696,17 @@ export function WorldView() {
       }
       if (msg.type === 'interact-started') {
         npcTalkPendingRef.current = false
+        const stashed = npcTalkLookRef.current
+        const look =
+          stashed?.npcId === msg.npcId
+            ? stashed.look
+            : (peersRef.current.find((p) => isNpcPresence(p) && p.id === msg.npcId)?.look ?? null)
+        npcTalkLookRef.current = null
         setNpcTalk({
           sessionId: msg.sessionId,
           npcId: msg.npcId,
           npcName: msg.displayName,
+          look,
           text: '',
           choices: [],
           streaming: true,
@@ -728,6 +739,7 @@ export function WorldView() {
       if (msg.type === 'interact-ended') {
         npcTalkPendingRef.current = false
         npcChoicePendingRef.current = false
+        npcTalkLookRef.current = null
         setNpcTalk((prev) => {
           if (!prev || !msg.sessionId) return prev
           return prev.sessionId === msg.sessionId ? null : prev
@@ -736,6 +748,7 @@ export function WorldView() {
       }
       if (msg.type === 'interact-error') {
         npcTalkPendingRef.current = false
+        npcTalkLookRef.current = null
         npcChoicePendingRef.current = false
         setNpcTalk((prev) => (prev ? { ...prev, pendingChoiceId: null } : prev))
         setMediaError(msg.message)
@@ -1964,6 +1977,7 @@ export function WorldView() {
         <NpcDialoguePanel
           open={!!npcTalk}
           npcName={npcTalk?.npcName ?? ''}
+          look={npcTalk?.look}
           text={npcTalk?.text ?? ''}
           choices={npcTalk?.choices ?? []}
           streaming={npcTalk?.streaming}
