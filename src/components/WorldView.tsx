@@ -49,6 +49,7 @@ import {
   nearestInteractableNpc,
   pickInteractableNpcAtScreen,
 } from '../npc/interactClient'
+import { canConsumeWheelScroll, eventTargetElement } from '../ui/canConsumeWheelScroll'
 import { FishingCatchOverlay } from './FishingCatch'
 import { FallGuysGame } from './FallGuysGame'
 import { XoGame } from './XoGame'
@@ -1081,6 +1082,14 @@ export function WorldView() {
     window.addEventListener('resize', resize)
 
     const onWheel = (e: WheelEvent) => {
+      // Let NPC dialogue text/choices scroll; still zoom over header or at scroll edges.
+      const target = eventTargetElement(e.target)
+      if (
+        target?.closest('.npc-dialogue__chrome') &&
+        canConsumeWheelScroll(target, e.deltaY, '.npc-dialogue__chrome')
+      ) {
+        return
+      }
       e.preventDefault()
       // scroll up = zoom in, scroll down = zoom out
       const delta = -e.deltaY * 0.0012
