@@ -49,6 +49,7 @@ import {
   nearestInteractableNpc,
   pickInteractableNpcAtScreen,
 } from '../npc/interactClient'
+import { canConsumeWheelScroll, eventTargetElement } from '../ui/canConsumeWheelScroll'
 import { FishingCatchOverlay } from './FishingCatch'
 import { FallGuysGame } from './FallGuysGame'
 import { XoGame } from './XoGame'
@@ -224,6 +225,7 @@ export function WorldView() {
       responseMode?: 'immediate' | 'async'
       loadingLabel?: string
     }[]
+    nodeId: string | null
     streaming: boolean
     pendingChoiceId: string | null
   }
@@ -696,6 +698,7 @@ export function WorldView() {
       }
       if (msg.type === 'interact-started') {
         npcTalkPendingRef.current = false
+        npcChoicePendingRef.current = false
         const stashed = npcTalkLookRef.current
         const look =
           stashed?.npcId === msg.npcId
@@ -709,6 +712,7 @@ export function WorldView() {
           look,
           text: '',
           choices: [],
+          nodeId: null,
           streaming: true,
           pendingChoiceId: null,
         })
@@ -730,6 +734,7 @@ export function WorldView() {
             ...prev,
             text: msg.text ?? prev.text,
             choices: msg.choices ?? [],
+            nodeId: msg.nodeId ?? prev.nodeId,
             streaming: false,
             pendingChoiceId: null,
           }
@@ -1094,6 +1099,14 @@ export function WorldView() {
     window.addEventListener('resize', resize)
 
     const onWheel = (e: WheelEvent) => {
+      // Let NPC dialogue text/choices scroll; still zoom over header or at scroll edges.
+      const target = eventTargetElement(e.target)
+      if (
+        target?.closest('.npc-dialogue__chrome') &&
+        canConsumeWheelScroll(target, e.deltaY, '.npc-dialogue__chrome')
+      ) {
+        return
+      }
       e.preventDefault()
       // scroll up = zoom in, scroll down = zoom out
       const delta = -e.deltaY * 0.0012
@@ -1980,6 +1993,7 @@ export function WorldView() {
           look={npcTalk?.look}
           text={npcTalk?.text ?? ''}
           choices={npcTalk?.choices ?? []}
+          nodeId={npcTalk?.nodeId}
           streaming={npcTalk?.streaming}
           pendingChoiceId={npcTalk?.pendingChoiceId}
           onChoose={(optionId) => {
@@ -1988,9 +2002,10 @@ export function WorldView() {
             const choice = talk.choices.find((candidate) => candidate.id === optionId)
             if (!choice) return
             npcChoicePendingRef.current = true
-            if (choice.responseMode === 'async') {
-              setNpcTalk((prev) => (prev ? { ...prev, pendingChoiceId: optionId } : prev))
-            }
+            // Lock all modes immediately — immediate/random paths used to leave
+            // buttons enabled, so a second click looked required when the first
+            // was in flight (common on hub → random gossip).
+            setNpcTalk((prev) => (prev ? { ...prev, pendingChoiceId: optionId } : prev))
             netRef.current?.send({
               type: 'interact-choose',
               sessionId: talk.sessionId,

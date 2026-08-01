@@ -18,6 +18,8 @@ type Props = {
   text: string
   choices: NpcDialogueChoice[]
   look?: CharacterLook | null
+  /** Dialogue node id — used so recycled choice ids (e.g. random gossip `again`) remount. */
+  nodeId?: string | null
   streaming?: boolean
   pendingChoiceId?: string | null
   onChoose: (optionId: string) => void
@@ -31,6 +33,7 @@ export function NpcDialoguePanel({
   text,
   choices,
   look = null,
+  nodeId = null,
   streaming = false,
   pendingChoiceId = null,
   onChoose,
@@ -46,6 +49,11 @@ export function NpcDialoguePanel({
   }, [text, streaming])
 
   if (!open) return null
+
+  const pendingChoice = pendingChoiceId
+    ? choices.find((choice) => choice.id === pendingChoiceId)
+    : undefined
+  const showPendingSpinner = pendingChoice?.responseMode === 'async'
 
   return (
     <div className="npc-dialogue" role="dialog" aria-label={`คุยกับ ${npcName}`}>
@@ -69,7 +77,7 @@ export function NpcDialoguePanel({
           {choices.length > 0 ? (
             <ul className="npc-dialogue__choices">
               {choices.map((choice, index) => (
-                <li key={choice.id}>
+                <li key={`${nodeId ?? 'node'}:${choice.id}`}>
                   <button
                     type="button"
                     disabled={pendingChoiceId !== null}
@@ -77,7 +85,7 @@ export function NpcDialoguePanel({
                   >
                     <span className="npc-dialogue__idx">{index + 1}.</span>
                     {choice.label}
-                    {pendingChoiceId === choice.id ? (
+                    {showPendingSpinner && pendingChoiceId === choice.id ? (
                       <span className="npc-dialogue__choice-loading">
                         {choice.loadingLabel ?? DEFAULT_LOADING_LABEL}
                       </span>
