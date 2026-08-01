@@ -1,4 +1,6 @@
 import { useEffect, useRef } from 'react'
+import type { CharacterLook } from '../types'
+import { LookPortrait3D } from './LookPortrait3D'
 import './NpcDialoguePanel.css'
 
 export type NpcDialogueChoice = {
@@ -15,6 +17,7 @@ type Props = {
   npcName: string
   text: string
   choices: NpcDialogueChoice[]
+  look?: CharacterLook | null
   /** Dialogue node id — used so recycled choice ids (e.g. random gossip `again`) remount. */
   nodeId?: string | null
   streaming?: boolean
@@ -29,6 +32,7 @@ export function NpcDialoguePanel({
   npcName,
   text,
   choices,
+  look = null,
   nodeId = null,
   streaming = false,
   pendingChoiceId = null,
@@ -53,40 +57,47 @@ export function NpcDialoguePanel({
 
   return (
     <div className="npc-dialogue" role="dialog" aria-label={`คุยกับ ${npcName}`}>
-      <div className="npc-dialogue__chrome">
-        <div className="npc-dialogue__head">
-          <strong>{npcName}</strong>
-          <button type="button" className="npc-dialogue__close" onClick={onClose} aria-label="ปิด">
-            Esc
-          </button>
+      <div className="npc-dialogue__row">
+        {look ? (
+          <div className="npc-dialogue__portrait">
+            <LookPortrait3D look={look} className="npc-dialogue__portrait-canvas" />
+          </div>
+        ) : null}
+        <div className="npc-dialogue__chrome">
+          <div className="npc-dialogue__head">
+            <strong>{npcName}</strong>
+            <button type="button" className="npc-dialogue__close" onClick={onClose} aria-label="ปิด">
+              Esc
+            </button>
+          </div>
+          <p className="npc-dialogue__text" ref={textRef}>
+            {text}
+            {streaming ? <span className="npc-dialogue__cursor" aria-hidden="true" /> : null}
+          </p>
+          {choices.length > 0 ? (
+            <ul className="npc-dialogue__choices">
+              {choices.map((choice, index) => (
+                <li key={`${nodeId ?? 'node'}:${choice.id}`}>
+                  <button
+                    type="button"
+                    disabled={pendingChoiceId !== null}
+                    onClick={() => onChoose(choice.id)}
+                  >
+                    <span className="npc-dialogue__idx">{index + 1}.</span>
+                    {choice.label}
+                    {showPendingSpinner && pendingChoiceId === choice.id ? (
+                      <span className="npc-dialogue__choice-loading">
+                        {choice.loadingLabel ?? DEFAULT_LOADING_LABEL}
+                      </span>
+                    ) : null}
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="npc-dialogue__hint">กด Esc เพื่อปิด</p>
+          )}
         </div>
-        <p className="npc-dialogue__text" ref={textRef}>
-          {text}
-          {streaming ? <span className="npc-dialogue__cursor" aria-hidden="true" /> : null}
-        </p>
-        {choices.length > 0 ? (
-          <ul className="npc-dialogue__choices">
-            {choices.map((choice, index) => (
-              <li key={`${nodeId ?? 'node'}:${choice.id}`}>
-                <button
-                  type="button"
-                  disabled={pendingChoiceId !== null}
-                  onClick={() => onChoose(choice.id)}
-                >
-                  <span className="npc-dialogue__idx">{index + 1}.</span>
-                  {choice.label}
-                  {showPendingSpinner && pendingChoiceId === choice.id ? (
-                    <span className="npc-dialogue__choice-loading">
-                      {choice.loadingLabel ?? DEFAULT_LOADING_LABEL}
-                    </span>
-                  ) : null}
-                </button>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="npc-dialogue__hint">กด Esc เพื่อปิด</p>
-        )}
       </div>
     </div>
   )
