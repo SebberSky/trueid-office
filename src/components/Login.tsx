@@ -1,5 +1,6 @@
 import { useMemo, useState, type FormEvent } from 'react'
 import { useAppStore } from '../store'
+import { appUrl } from '../appBase'
 import { readPendingRoomIdFromUrl } from '../world/roomLink'
 import { generateWorld } from '../world/terrain'
 import './Login.css'
@@ -26,7 +27,7 @@ export function Login() {
       <div className="login__voxel-grid" aria-hidden />
 
       <main className="login__hero">
-        <img className="login__logo" src="/favicon.svg" alt="" width={72} height={72} />
+        <img className="login__logo" src={appUrl('favicon.svg')} alt="" width={72} height={72} />
         <h1 className="login__brand">
           TrueID
           <span>Office</span>
