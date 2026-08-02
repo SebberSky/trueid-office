@@ -1,8 +1,10 @@
 import os from 'node:os'
-import { defineConfig, type PluginOption } from 'vite'
+import { defineConfig, type Plugin, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
-import { APP_BASE_PATH } from './shared/appPath.ts'
+import { APP_BASE_PATH, APP_BASE_URL } from './shared/appPath.ts'
+
+const APP_BASE = APP_BASE_PATH
 
 function lanHosts(): string[] {
   const hosts = new Set<string>(['localhost', '127.0.0.1', '::1'])
@@ -17,35 +19,22 @@ function lanHosts(): string[] {
 }
 
 function stripOfficePrefix(path: string): string {
-  if (path === APP_BASE_PATH || path.startsWith(`${APP_BASE_PATH}/`)) {
-    const rest = path.slice(APP_BASE_PATH.length)
+  if (path === APP_BASE || path.startsWith(`${APP_BASE}/`)) {
+    const rest = path.slice(APP_BASE.length)
     return rest.length > 0 ? rest : '/'
   }
   return path
 }
 
-/**
- * Funnel `--set-path=/office` forwards `/office/...` as `/...` to Vite.
- * Keep proxies for both stripped and prefixed paths.
- */
 function backendProxy() {
   return {
-    '/ws': {
-      target: 'http://127.0.0.1:3001',
-      changeOrigin: true,
-      ws: true,
-    },
-    '/api': {
-      target: 'http://127.0.0.1:3001',
-      changeOrigin: true,
-    },
-    [`${APP_BASE_PATH}/ws`]: {
+    [`${APP_BASE}/ws`]: {
       target: 'http://127.0.0.1:3001',
       changeOrigin: true,
       ws: true,
       rewrite: stripOfficePrefix,
     },
-    [`${APP_BASE_PATH}/api`]: {
+    [`${APP_BASE}/api`]: {
       target: 'http://127.0.0.1:3001',
       changeOrigin: true,
       rewrite: stripOfficePrefix,
@@ -53,11 +42,25 @@ function backendProxy() {
   }
 }
 
-// Default: HTTPS (basicSsl) so getUserMedia works on LAN IPs.
-// Set VITE_DEV_HTTPS=0 for plain HTTP if needed.
+/** Prefix absolute root URLs so Funnel /office can load Vite client scripts. */
+function mountAbsoluteUrls(): Plugin {
+  return {
+    name: 'mount-absolute-urls',
+    transformIndexHtml: {
+      order: 'post',
+      handler(html) {
+        return html
+          .replace(/(href|src)="\/(?!\/|office\/)/g, `$1="${APP_BASE}/`)
+          .replace(/(href|src)='\/(?!\/|office\/)/g, `$1='${APP_BASE}/`)
+          .replace(/(from )(["'])\/(?!\/|office\/)/g, `$1$2${APP_BASE}/`)
+      },
+    },
+  }
+}
+
 const useDevHttps = process.env.VITE_DEV_HTTPS !== '0'
 
-const plugins: PluginOption[] = [react()]
+const plugins: PluginOption[] = [react(), mountAbsoluteUrls()]
 if (useDevHttps) {
   plugins.push(
     basicSsl({
@@ -68,8 +71,7 @@ if (useDevHttps) {
 }
 
 export default defineConfig({
-  // Relative base: Funnel strips /office so Vite sees `/` — absolute `/office/` 302-loops.
-  base: './',
+  base: APP_BASE_URL,
   plugins,
   build: {
     chunkSizeWarningLimit: 1000,
