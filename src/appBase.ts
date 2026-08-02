@@ -1,17 +1,24 @@
-import { APP_BASE_URL } from '../shared/appPath'
+import { APP_BASE_PATH } from '../shared/appPath'
 
-/** Vite `base` with trailing slash (e.g. `/office/`). */
-export function appBaseUrl(): string {
-  const fromVite = import.meta.env.BASE_URL as string | undefined
-  if (fromVite && fromVite !== '/') {
-    return fromVite.endsWith('/') ? fromVite : `${fromVite}/`
-  }
-  return APP_BASE_URL
+/** Funnel mount from the browser path (`/office`), or `/office` in tests. */
+export function mountPrefix(): string {
+  if (typeof window === 'undefined') return APP_BASE_PATH
+  const path = window.location.pathname
+  if (path === '/office' || path.startsWith('/office/')) return '/office'
+  // Local vite without Funnel path
+  return ''
 }
 
-/** Join `path` onto the app base (`api/health` → `/office/api/health`). */
+/** Public base with trailing slash (`/office/` or `/` on plain localhost). */
+export function appBaseUrl(): string {
+  const mount = mountPrefix()
+  return mount ? `${mount}/` : '/'
+}
+
+/** Join path onto the Funnel mount (`api/health` → `/office/api/health`). */
 export function appUrl(path: string): string {
-  const base = appBaseUrl()
   const clean = path.replace(/^\/+/, '')
+  const base = appBaseUrl()
+  if (!clean) return base
   return `${base}${clean}`
 }
