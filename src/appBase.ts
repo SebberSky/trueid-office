@@ -1,24 +1,17 @@
-import { APP_BASE_PATH } from '../shared/appPath'
+import { APP_BASE_PATH, APP_BASE_URL } from '../shared/appPath'
 
-/** Funnel mount from the browser path (`/office`), or `/office` in tests. */
+/** Always `/office` for Funnel public URLs. */
 export function mountPrefix(): string {
-  if (typeof window === 'undefined') return APP_BASE_PATH
-  const path = window.location.pathname
-  if (path === '/office' || path.startsWith('/office/')) return '/office'
-  // Local vite without Funnel path
-  return ''
+  return APP_BASE_PATH
 }
 
-/** Public base with trailing slash (`/office/` or `/` on plain localhost). */
 export function appBaseUrl(): string {
-  const mount = mountPrefix()
-  return mount ? `${mount}/` : '/'
+  return APP_BASE_URL
 }
 
-/** Join path onto the Funnel mount (`api/health` → `/office/api/health`). */
+/** Join path onto `/office/` (`api/health` → `/office/api/health`). */
 export function appUrl(path: string): string {
   const clean = path.replace(/^\/+/, '')
-  const base = appBaseUrl()
-  if (!clean) return base
-  return `${base}${clean}`
+  if (!clean) return APP_BASE_URL
+  return `${APP_BASE_URL}${clean}`
 }
