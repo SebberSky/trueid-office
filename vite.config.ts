@@ -1,7 +1,11 @@
 import os from 'node:os'
+import type { Connect, PreviewServer, ViteDevServer } from 'vite'
 import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
+import { APP_BASE_PATH, APP_BASE_URL } from './shared/appPath.ts'
+
+const APP_BASE = APP_BASE_PATH
 
 function lanHosts(): string[] {
   const hosts = new Set<string>(['localhost', '127.0.0.1', '::1'])
@@ -15,11 +19,62 @@ function lanHosts(): string[] {
   return [...hosts]
 }
 
+function stripAppBase(path: string): string {
+  if (path === APP_BASE || path.startsWith(`${APP_BASE}/`)) {
+    const rest = path.slice(APP_BASE.length)
+    return rest.length > 0 ? rest : '/'
+  }
+  return path
+}
+
+function backendProxy() {
+  return {
+    [`${APP_BASE}/ws`]: {
+      target: 'http://127.0.0.1:3001',
+      changeOrigin: true,
+      ws: true,
+      rewrite: stripAppBase,
+    },
+    [`${APP_BASE}/api`]: {
+      target: 'http://127.0.0.1:3001',
+      changeOrigin: true,
+      rewrite: stripAppBase,
+    },
+  }
+}
+
+/** Redirect `/` to the app base path. */
+function redirectRootToAppBase(): PluginOption {
+  const mount = (middlewares: Connect.Server) => {
+    middlewares.use((req, res, next) => {
+      const raw = req.url ?? '/'
+      const pathOnly = raw.split('?', 1)[0] ?? '/'
+      if (pathOnly === '/' || pathOnly === '') {
+        const qs = raw.includes('?') ? raw.slice(raw.indexOf('?')) : ''
+        res.statusCode = 302
+        res.setHeader('Location', `${APP_BASE}/${qs}`)
+        res.end()
+        return
+      }
+      next()
+    })
+  }
+  return {
+    name: 'redirect-root-to-office',
+    configureServer(server: ViteDevServer) {
+      mount(server.middlewares)
+    },
+    configurePreviewServer(server: PreviewServer) {
+      mount(server.middlewares)
+    },
+  }
+}
+
 // Default: HTTPS (basicSsl) so getUserMedia works on LAN IPs.
 // Set VITE_DEV_HTTPS=0 for plain HTTP if needed.
 const useDevHttps = process.env.VITE_DEV_HTTPS !== '0'
 
-const plugins: PluginOption[] = [react()]
+const plugins: PluginOption[] = [react(), redirectRootToAppBase()]
 if (useDevHttps) {
   plugins.push(
     basicSsl({
@@ -30,6 +85,7 @@ if (useDevHttps) {
 }
 
 export default defineConfig({
+  base: APP_BASE_URL,
   plugins,
   build: {
     // Suppress size warning for the unavoidable three.js vendor chunk (~531 kB).
@@ -52,33 +108,13 @@ export default defineConfig({
     host: true,
     // Funnel / MagicDNS hostnames change with the tailnet — allow all in dev.
     allowedHosts: true,
-    proxy: {
-      // Prefer http target + ws:true — more reliable than ws:// with Vite HTTPS.
-      '/ws': {
-        target: 'http://127.0.0.1:3001',
-        changeOrigin: true,
-        ws: true,
-      },
-      '/api': {
-        target: 'http://127.0.0.1:3001',
-        changeOrigin: true,
-      },
-    },
+    // Prefer http target + ws:true — more reliable than ws:// with Vite HTTPS.
+    proxy: backendProxy(),
   },
   preview: {
     host: '0.0.0.0',
     port: 5173,
     allowedHosts: true,
-    proxy: {
-      '/ws': {
-        target: 'http://127.0.0.1:3001',
-        changeOrigin: true,
-        ws: true,
-      },
-      '/api': {
-        target: 'http://127.0.0.1:3001',
-        changeOrigin: true,
-      },
-    },
+    proxy: backendProxy(),
   },
 })

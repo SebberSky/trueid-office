@@ -1,3 +1,4 @@
+import { appUrl } from '../appBase'
 import { TILE } from '../world/terrain'
 
 /** Lightweight one-shot SFX — each clip finishes before it can play again. */
@@ -71,36 +72,36 @@ export function setPublicChatAlertMuted(muted: boolean) {
 }
 
 export function playMetallicClang(sourcePx: number, sourcePy: number) {
-  playWorld('/sounds/metallic-clang.mp3', 0.28, sourcePx, sourcePy)
+  playWorld(appUrl('sounds/metallic-clang.mp3'), 0.28, sourcePx, sourcePy)
 }
 
 export function playPoisonSpit(sourcePx: number, sourcePy: number) {
-  playWorld('/sounds/poison-spit.mp3', 0.22, sourcePx, sourcePy)
+  playWorld(appUrl('sounds/poison-spit.mp3'), 0.22, sourcePx, sourcePy)
 }
 
 export function playGodzillaBite(sourcePx: number, sourcePy: number) {
-  playWorld('/sounds/godzilla-bite.mp3', 0.3, sourcePx, sourcePy)
+  playWorld(appUrl('sounds/godzilla-bite.mp3'), 0.3, sourcePx, sourcePy)
 }
 
 export function playDragonFire(sourcePx: number, sourcePy: number) {
-  playWorld('/sounds/dragon-fire.mp3', 0.26, sourcePx, sourcePy)
+  playWorld(appUrl('sounds/dragon-fire.mp3'), 0.26, sourcePx, sourcePy)
 }
 
 export function playDogBark(sourcePx: number, sourcePy: number) {
-  playWorld('/sounds/dog-bark.mp3', 0.32, sourcePx, sourcePy)
+  playWorld(appUrl('sounds/dog-bark.mp3'), 0.32, sourcePx, sourcePy)
 }
 
 export function playCatMeow(sourcePx: number, sourcePy: number) {
-  playWorld('/sounds/cat-meow.mp3', 0.32, sourcePx, sourcePy)
+  playWorld(appUrl('sounds/cat-meow.mp3'), 0.32, sourcePx, sourcePy)
 }
 
 /** Incoming global or room chat (quieter; respects mute). */
 export function playChatPublicIncoming() {
   if (publicChatAlertMuted) return
-  play('/sounds/chat-incoming.mp3', PUBLIC_CHAT_VOLUME, 'chat-alert-public')
+  play(appUrl('sounds/chat-incoming.mp3'), PUBLIC_CHAT_VOLUME, 'chat-alert-public')
 }
 
 /** Incoming private DM — louder than public chat alerts. */
 export function playChatDmIncoming() {
-  play('/sounds/chat-incoming.mp3', DM_CHAT_VOLUME, 'chat-alert-dm')
+  play(appUrl('sounds/chat-incoming.mp3'), DM_CHAT_VOLUME, 'chat-alert-dm')
 }

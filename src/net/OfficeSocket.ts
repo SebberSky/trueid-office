@@ -1,15 +1,15 @@
 import type { ClientMsg, ServerMsg } from '../../shared/protocol'
+import { appUrl } from '../appBase'
 
 function defaultWsUrl() {
   const proto = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  // Dev: Vite proxies /ws → server. Prod: same host or VITE_WS_URL.
   if (import.meta.env.VITE_WS_URL) return String(import.meta.env.VITE_WS_URL)
-  return `${proto}//${location.host}/ws`
+  return `${proto}//${location.host}${appUrl('ws')}`
 }
 
 function defaultApiBase() {
   if (import.meta.env.VITE_API_URL) return String(import.meta.env.VITE_API_URL)
-  return ''
+  return appUrl('').replace(/\/$/, '')
 }
 
 type Handler = (msg: ServerMsg) => void

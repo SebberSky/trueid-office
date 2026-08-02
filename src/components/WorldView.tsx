@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { nanoid } from 'nanoid'
 import { useAppStore } from '../store'
+import { appUrl } from '../appBase'
 import { TILE, canTraverse, generateWorld, isAtWaterEdge, isUnlimited, nearestWaterCastTarget, pixelCenter, roomAt } from '../world/terrain'
 import { CampusScene } from '../world/CampusScene'
 import { findAdjacentWarpDestination } from '../world/warp'
@@ -1855,7 +1856,7 @@ export function WorldView() {
       )}
       <header className="world__bar">
         <div className="world__brand">
-          <img className="world__logo" src="/favicon.svg" alt="" width={28} height={28} />
+          <img className="world__logo" src={appUrl('favicon.svg')} alt="" width={28} height={28} />
           <div className="world__brand-text">
             <strong>TrueID Office</strong>
             <span>{session.look.displayName}</span>
@@ -2028,7 +2029,7 @@ export function WorldView() {
                 const zoneIds = [...new Set(fgZoneIds)]
                 window.setTimeout(() => {
                   netRef.current?.send({ type: 'fallguys-start', zoneIds })
-                  void fetch('/api/fallguys/start', {
+                  void fetch(appUrl('api/fallguys/start'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id: session.id, zoneIds }),
@@ -2075,7 +2076,7 @@ export function WorldView() {
                   netRef.current?.send({ type: 'xo-start', zoneIds })
                   console.info('[xo] sent xo-start', { zoneIds })
                   // HTTP path — reliable when WS client→server frames never reach Node.
-                  void fetch('/api/xo/start', {
+                  void fetch(appUrl('api/xo/start'), {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ id: session.id, zoneIds }),

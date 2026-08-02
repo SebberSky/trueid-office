@@ -6,15 +6,16 @@
 const PORT = process.env.PORT || '5173'
 const HOST = process.env.HOST_IP || '100.84.246.127'
 const FUNNEL_HOST = process.env.FUNNEL_HOST || 'agent3s-imac.taildc5084.ts.net:8443'
+const APP_BASE = '/office'
 
 console.log(`
 TrueID Office — โฮสต์หลัก (agent3)
 ────────────────────────────────────────
-คนนอก / ไม่ต้อง VPN:   https://${FUNNEL_HOST}/
+คนนอก / ไม่ต้อง VPN:   https://${FUNNEL_HOST}${APP_BASE}/
   (Tailscale Funnel — คอนฟิกค้างบนโฮสต์แล้ว)
 
-ใน Tailscale (สำรอง):  http://${HOST}:${PORT}/
-เครื่องโฮสต์เอง:         http://localhost:${PORT}/
+ใน Tailscale (สำรอง):  http://${HOST}:${PORT}${APP_BASE}/
+เครื่องโฮสต์เอง:         http://localhost:${PORT}${APP_BASE}/
 
 สำคัญ
 • โฮสต์รันผ่าน pm2 จาก ~/apps/trueid-office (Jenkins webhook)

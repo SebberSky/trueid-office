@@ -21,8 +21,8 @@ Virtual workspace สำหรับอีเมลองค์กร `@truedigi
 
 | ใคร | URL |
 |-----|-----|
-| คนนอก / ไม่ติด Tailscale | **`https://agent3s-imac.tail91abbd.ts.net/`** |
-| เครื่องโฮสต์เอง | `http://localhost:5173/` |
+| คนนอก / ไม่ติด Tailscale | **`https://agent3s-imac.tail91abbd.ts.net/office/`** |
+| เครื่องโฮสต์เอง | `http://localhost:5173/office/` |
 
 ```bash
 npm run share-info
