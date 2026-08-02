@@ -1,11 +1,8 @@
 import os from 'node:os'
-import type { Connect, PreviewServer, ViteDevServer } from 'vite'
 import { defineConfig, type PluginOption } from 'vite'
 import react from '@vitejs/plugin-react'
 import basicSsl from '@vitejs/plugin-basic-ssl'
-import { APP_BASE_PATH, APP_BASE_URL } from './shared/appPath.ts'
-
-const APP_BASE = APP_BASE_PATH
+import { APP_BASE_PATH } from './shared/appPath.ts'
 
 function lanHosts(): string[] {
   const hosts = new Set<string>(['localhost', '127.0.0.1', '::1'])
@@ -19,53 +16,39 @@ function lanHosts(): string[] {
   return [...hosts]
 }
 
-function stripAppBase(path: string): string {
-  if (path === APP_BASE || path.startsWith(`${APP_BASE}/`)) {
-    const rest = path.slice(APP_BASE.length)
+function stripOfficePrefix(path: string): string {
+  if (path === APP_BASE_PATH || path.startsWith(`${APP_BASE_PATH}/`)) {
+    const rest = path.slice(APP_BASE_PATH.length)
     return rest.length > 0 ? rest : '/'
   }
   return path
 }
 
+/**
+ * Funnel `--set-path=/office` forwards `/office/...` as `/...` to Vite.
+ * Keep proxies for both stripped and prefixed paths.
+ */
 function backendProxy() {
   return {
-    [`${APP_BASE}/ws`]: {
+    '/ws': {
       target: 'http://127.0.0.1:3001',
       changeOrigin: true,
       ws: true,
-      rewrite: stripAppBase,
     },
-    [`${APP_BASE}/api`]: {
+    '/api': {
       target: 'http://127.0.0.1:3001',
       changeOrigin: true,
-      rewrite: stripAppBase,
     },
-  }
-}
-
-/** Redirect `/` to the app base path. */
-function redirectRootToAppBase(): PluginOption {
-  const mount = (middlewares: Connect.Server) => {
-    middlewares.use((req, res, next) => {
-      const raw = req.url ?? '/'
-      const pathOnly = raw.split('?', 1)[0] ?? '/'
-      if (pathOnly === '/' || pathOnly === '') {
-        const qs = raw.includes('?') ? raw.slice(raw.indexOf('?')) : ''
-        res.statusCode = 302
-        res.setHeader('Location', `${APP_BASE}/${qs}`)
-        res.end()
-        return
-      }
-      next()
-    })
-  }
-  return {
-    name: 'redirect-root-to-office',
-    configureServer(server: ViteDevServer) {
-      mount(server.middlewares)
+    [`${APP_BASE_PATH}/ws`]: {
+      target: 'http://127.0.0.1:3001',
+      changeOrigin: true,
+      ws: true,
+      rewrite: stripOfficePrefix,
     },
-    configurePreviewServer(server: PreviewServer) {
-      mount(server.middlewares)
+    [`${APP_BASE_PATH}/api`]: {
+      target: 'http://127.0.0.1:3001',
+      changeOrigin: true,
+      rewrite: stripOfficePrefix,
     },
   }
 }
@@ -74,7 +57,7 @@ function redirectRootToAppBase(): PluginOption {
 // Set VITE_DEV_HTTPS=0 for plain HTTP if needed.
 const useDevHttps = process.env.VITE_DEV_HTTPS !== '0'
 
-const plugins: PluginOption[] = [react(), redirectRootToAppBase()]
+const plugins: PluginOption[] = [react()]
 if (useDevHttps) {
   plugins.push(
     basicSsl({
@@ -85,11 +68,10 @@ if (useDevHttps) {
 }
 
 export default defineConfig({
-  base: APP_BASE_URL,
+  // Relative base: Funnel strips /office so Vite sees `/` — absolute `/office/` 302-loops.
+  base: './',
   plugins,
   build: {
-    // Suppress size warning for the unavoidable three.js vendor chunk (~531 kB).
-    // App entry stays small via manualChunks + lazy WorldView.
     chunkSizeWarningLimit: 1000,
     rollupOptions: {
       output: {
@@ -106,9 +88,7 @@ export default defineConfig({
   },
   server: {
     host: true,
-    // Funnel / MagicDNS hostnames change with the tailnet — allow all in dev.
     allowedHosts: true,
-    // Prefer http target + ws:true — more reliable than ws:// with Vite HTTPS.
     proxy: backendProxy(),
   },
   preview: {
