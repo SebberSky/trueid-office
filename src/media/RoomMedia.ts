@@ -46,6 +46,7 @@ export class RoomMedia {
   private onRoomChat: (msgs: ChatMessage[]) => void
   private unsubSignal: (() => void) | null = null
   private makingOffer = new Set<string>()
+  private syncQueue: Promise<void> = Promise.resolve()
 
   constructor(
     bus: PresenceBus,
@@ -250,6 +251,15 @@ export class RoomMedia {
   }
 
   async syncRoom(roomId: string | null, peerIdsInRoom: string[]) {
+    const run = this.syncQueue.then(() => this.syncRoomNow(roomId, peerIdsInRoom))
+    this.syncQueue = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+
+  private async syncRoomNow(roomId: string | null, peerIdsInRoom: string[]) {
     const prev = this.roomId
     this.roomId = roomId
 
@@ -283,9 +293,13 @@ export class RoomMedia {
   }
 
   /** Re-check room peers and revive dead links (e.g. after UI suspend / look edit). */
-  async refreshConnections(peerIdsInRoom: string[], forceRenegotiate = false) {
-    if (!this.roomId) return
-    await this.syncRoom(this.roomId, peerIdsInRoom)
+  async refreshConnections(
+    peerIdsInRoom: string[],
+    forceRenegotiate = false,
+    roomId: string | null = this.roomId,
+  ) {
+    if (!roomId) return
+    await this.syncRoom(roomId, peerIdsInRoom)
     for (const peerId of this.pcs.keys()) {
       const pc = this.pcs.get(peerId)
       if (!pc || this.isPcDead(pc)) continue
@@ -534,6 +548,9 @@ export class RoomMedia {
         await pc.setLocalDescription(answer)
         const ld = pc.localDescription!
         this.bus.sendSignal(from, { kind: 'answer', sdp: { type: ld.type, sdp: ld.sdp } })
+        if (this.localStream || this.screenStream) {
+          void this.renegotiate(from)
+        }
       } catch {
         /* renegotiation race — next offer/answer will recover */
       }
