@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { nanoid } from 'nanoid'
 import { useAppStore } from '../store'
 import { appUrl } from '../appBase'
-import { TILE, canTraverse, generateWorld, isAtWaterEdge, isUnlimited, nearestWaterCastTarget, pixelCenter, roomAt } from '../world/terrain'
+import { TILE, canTraverse, generateWorld, isAtWaterEdge, isAttackQuietZone, isUnlimited, nearestWaterCastTarget, pixelCenter, roomAt } from '../world/terrain'
 import { CampusScene } from '../world/CampusScene'
 import { findAdjacentWarpDestination } from '../world/warp'
 import {
@@ -172,6 +172,9 @@ export function WorldView() {
   const [voiceOn, setVoiceOn] = useState(false)
   const voiceOnRef = useRef(voiceOn)
   voiceOnRef.current = voiceOn
+  const [attacksPaused, setAttacksPaused] = useState(false)
+  const attacksPausedRef = useRef(attacksPaused)
+  attacksPausedRef.current = attacksPaused
   const [sharing, setSharing] = useState(false)
   const [recording, setRecording] = useState(false)
   const [peerCount, setPeerCount] = useState(0)
@@ -1005,6 +1008,7 @@ export function WorldView() {
       }
       if (e.code === 'KeyE' && !e.repeat) {
         e.preventDefault()
+        if (attacksPausedRef.current && isAttackQuietZone(roomIdRef.current)) return
         const look = lookRef.current
         if (look.species === 'male' || look.species === 'female') {
           sceneRef.current?.slapTray()
@@ -1496,10 +1500,14 @@ export function WorldView() {
   // Outside rooms: no mic / screen share — shut them down when leaving
   useEffect(() => {
     if (roomId) {
-      // Entering a room: try to unmute remote audio (mic stays off until user enables it).
       resumeAudioRef.current?.()
+      const peerIds = peersRef.current
+        .filter((p) => isUserPresence(p) && p.roomId === roomId)
+        .map((p) => p.id)
+      void mediaRef.current?.refreshConnections(peerIds, true, roomId)
       return
     }
+    let cancelled = false
     setMediaError(null)
     setVoiceOn(false)
     sceneRef.current?.setLocalMic(false)
@@ -1514,13 +1522,17 @@ export function WorldView() {
     void stopRecordingIfNeeded()
     void (async () => {
       await mediaRef.current?.setVoice(false)
+      if (cancelled) return
       await mediaRef.current?.stopScreenShare()
+      if (cancelled) return
       syncVoiceMonitorRef.current()
-      // Drop preview after local stop — do not keep showing remotes outside a room.
       setScreenFrom(null)
       setSharing(false)
       screenStreamRef.current = null
     })()
+    return () => {
+      cancelled = true
+    }
   }, [roomId])
 
   useEffect(() => {
@@ -1732,6 +1744,7 @@ export function WorldView() {
   useEffect(() => () => stopFishing(), [stopFishing])
 
   const canLockRoom = !!roomId && map.rooms.find((r) => r.id === roomId)?.kind === 'room'
+  const canPauseAttacks = isAttackQuietZone(roomId)
   const roomIsLocked = !!(roomId && lockedRooms.has(roomId))
 
   const roomLabelFor = (id: string | null | undefined) => {
@@ -2287,6 +2300,22 @@ export function WorldView() {
               >
                 {sharing ? '⏹️' : '🖥️'}
               </button>
+              {canPauseAttacks && (
+                <button
+                  type="button"
+                  className={attacksPaused ? 'on calm' : ''}
+                  onClick={() => setAttacksPaused((v) => !v)}
+                  title={
+                    attacksPaused
+                      ? 'อนุญาตโจมตีอีกครั้ง (E)'
+                      : 'หยุดโจมตี — กด E แล้วไม่มีอะไรเกิดขึ้น'
+                  }
+                  aria-label={attacksPaused ? 'อนุญาตโจมตี' : 'หยุดโจมตี'}
+                  aria-pressed={attacksPaused}
+                >
+                  {attacksPaused ? '🛡️' : '⚔️'}
+                </button>
+              )}
               {canLockRoom && (
                 <button
                   type="button"

@@ -712,6 +712,11 @@ export function isUnlimited(room: RoomDef) {
   return room.capacity <= 0 || room.kind === 'plaza'
 }
 
+export function isAttackQuietZone(roomId: string | null | undefined) {
+  if (!roomId) return false
+  return roomId === 'plaza-main' || roomId.startsWith('meet')
+}
+
 export function pixelCenter(tx: number, ty: number) {
   return { x: tx * TILE + TILE / 2, y: ty * TILE + TILE / 2 }
 }
