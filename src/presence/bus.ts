@@ -34,6 +34,11 @@ export class PresenceBus {
     this.unsubOpen = net.onOpen(() => this.sendHello())
   }
 
+  setHelloLook(look: CharacterLook) {
+    if (!this.hello) return
+    this.hello = { ...this.hello, look }
+  }
+
   private sendHello() {
     if (!this.hello) return
     this.net.send({
