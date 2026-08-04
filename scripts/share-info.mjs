@@ -5,7 +5,7 @@
  */
 const PORT = process.env.PORT || '5173'
 const HOST = process.env.HOST_IP || '100.84.246.127'
-const FUNNEL_HOST = process.env.FUNNEL_HOST || 'agent3s-imac.taildc5084.ts.net:8443'
+const FUNNEL_HOST = process.env.FUNNEL_HOST || 'agent3s-imac.taildc5084.ts.net'
 const APP_BASE = '/office'
 
 console.log(`

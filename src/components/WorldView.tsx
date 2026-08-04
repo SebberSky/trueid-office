@@ -170,6 +170,8 @@ export function WorldView() {
   const [lockedRooms, setLockedRooms] = useState<Set<string>>(() => new Set())
   const [pinsByRoom, setPinsByRoom] = useState<Map<string, PinnedMessage>>(() => new Map())
   const [voiceOn, setVoiceOn] = useState(false)
+  const voiceOnRef = useRef(voiceOn)
+  voiceOnRef.current = voiceOn
   const [sharing, setSharing] = useState(false)
   const [recording, setRecording] = useState(false)
   const [peerCount, setPeerCount] = useState(0)
@@ -506,7 +508,7 @@ export function WorldView() {
     netRef.current = net
     const bus = new PresenceBus(net, session.id, {
       email: session.email,
-      look: session.look,
+      look: lookRef.current,
     })
     busRef.current = bus
     // The render loop reads peersRef every frame, so React state only needs to
@@ -557,7 +559,7 @@ export function WorldView() {
           pendingRoomIdRef.current = null
           clearRoomQueryFromUrl()
           const room = map.rooms.find((r) => r.id === pendingId)
-          const canFly = canFlyOverWater(session.look)
+          const canFly = canFlyOverWater(lookRef.current)
           let placed = false
           if (room) {
             const enter = canEnterRoomViaLink({
@@ -601,7 +603,7 @@ export function WorldView() {
         if (msg.lastPose && !poseAppliedRef.current) {
           const tx = Math.floor(msg.lastPose.x / TILE)
           const ty = Math.floor(msg.lastPose.y / TILE)
-          if (canTraverse(map, tx, ty, canFlyOverWater(session.look))) {
+          if (canTraverse(map, tx, ty, canFlyOverWater(lookRef.current))) {
             pos.current.x = msg.lastPose.x
             pos.current.y = msg.lastPose.y
             facing.current = msg.lastPose.facing
@@ -867,6 +869,20 @@ export function WorldView() {
     )
     mediaRef.current = media
 
+    if (voiceOnRef.current) {
+      void media
+        .setVoice(true)
+        .then(() => {
+          sceneRef.current?.setLocalMic(true)
+          syncVoiceMonitorRef.current()
+        })
+        .catch((err) => {
+          setVoiceOn(false)
+          sceneRef.current?.setLocalMic(false)
+          setMediaError(mediaErrMessage(err, 'ไม่สามารถเปิดไมโครโฟนได้'))
+        })
+    }
+
     const resumeAudio = () => {
       voiceMonitorRef.current.resume()
       const host = audioHostRef.current
@@ -914,7 +930,11 @@ export function WorldView() {
       netRef.current = null
       dmChatRef.current = null
     }
-  }, [session.id, session.email, session.look, applyLocks, pushRoomSys, logout, map, setLastPose])
+  }, [session.id, session.email, applyLocks, pushRoomSys, logout, map, setLastPose])
+
+  useEffect(() => {
+    busRef.current?.setHelloLook(session.look)
+  }, [session.look])
 
   useEffect(() => {
     // Use e.code so WASD still works under Thai IME (ไ/ฟ/ห/ก on those keys)
@@ -1066,6 +1086,19 @@ export function WorldView() {
       .filter((p) => isUserPresence(p) && p.roomId === room.id)
       .map((p) => p.id)
     void mediaRef.current.refreshConnections(peerIds, true)
+    if (voiceOnRef.current) {
+      void mediaRef.current
+        .setVoice(true)
+        .then(() => {
+          sceneRef.current?.setLocalMic(true)
+          syncVoiceMonitorRef.current()
+        })
+        .catch((err) => {
+          setVoiceOn(false)
+          sceneRef.current?.setLocalMic(false)
+          setMediaError(mediaErrMessage(err, 'ไม่สามารถเปิดไมโครโฟนได้'))
+        })
+    }
   }, [worldActive, map])
 
   // 3D scene + movement loop
@@ -1077,6 +1110,7 @@ export function WorldView() {
     const scene = new CampusScene(canvas, map, session.look)
     sceneRef.current = scene
     scene.setRoomLocks(lockedRoomsRef.current)
+    scene.setLocalMic(voiceOnRef.current)
 
     let raf = 0
     let last = performance.now()
