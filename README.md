@@ -21,7 +21,7 @@ Virtual workspace สำหรับอีเมลองค์กร `@truedigi
 
 | ใคร | URL |
 |-----|-----|
-| คนนอก / ไม่ติด Tailscale | **`https://agent3s-imac.taildc5084.ts.net/office/`** |
+| คนนอก / ไม่ติด Tailscale | **`https://agent3s-imac.tail91abbd.ts.net/office/`** |
 | เครื่องโฮสต์เอง | `http://localhost:5173/office/` |
 
 ```bash
@@ -41,26 +41,7 @@ Webhook ไม่ควรรัน `npm run dev` ตรงๆ ใน job (จ�
 `pm2` อยู่ใน `devDependencies` แล้ว — Jenkins ใช้ `npx pm2` หลัง `npm ci` ไม่ต้องติด global  
 (ออปชัน) ครั้งแรกบนเครื่องโฮสต์ถ้าอยากให้ขึ้นหลังรีบูต: `npx pm2 startup` แล้วทำตามที่มันบอก
 
-Funnel / Tailscale ตั้งครั้งเดียวบนโฮสต์แล้วทิ้งไว้ — ไม่ผูกในสคริปต์ deploy  
-
-**Poker ใช้ Funnel `:443` ร่วมโฮสต์อยู่แล้ว** — อย่า `funnel --https=443` ทับทั้งพอร์ต  
-ให้ mount แค่ path `/office` บน 443 แล้วปิด `:8443` ของ Office:
-
-```bash
-# บน agent3 — ดูว่า Poker อยู่ที่ 443 และ Office อยู่ที่ 8443
-tailscale funnel status
-
-# เพิ่ม Office บน 443 โดยไม่แตะ root ของ Poker
-sudo tailscale funnel --bg --https=443 --set-path=/office http://127.0.0.1:5173
-
-# ปิด Funnel :8443 ของ Office (ถ้ามี)
-sudo tailscale funnel --https=8443 off
-# หรือถ้า mount แบบมี path: sudo tailscale funnel --https=8443 --set-path=/office off
-```
-
-จากนั้นเข้าได้ที่ **`https://agent3s-imac.taildc5084.ts.net/office/`** (ไม่มีพอร์ต)  
-Poker ยังอยู่ที่ root ของ `https://agent3s-imac.taildc5084.ts.net/` ตามเดิม  
-Funnel อนุญาตแค่พอร์ต `443` / `8443` / `10000` — แชร์พอร์ตด้วย `--set-path`
+Funnel / Tailscale ตั้งครั้งเดียวบนโฮสต์ (เช่น `tailscale funnel --bg 5173`) แล้วทิ้งไว้ — ไม่ผูกในสคริปต์ deploy
 
 ### Job
 
